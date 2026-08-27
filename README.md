@@ -122,7 +122,7 @@ Claude finishes the task
       ↓  Stop hook
 preflight  →  starts Docker / Supabase if they are down
       ↓
-verify     →  format · lint · types · tests · build
+verify     →  format · lint · types · tests · build · Dockerfile
       ↓  blocks on failure
 refresh    →  Opus 5 revalidates only the findings the change could reach
       ↓  fail-soft

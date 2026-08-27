@@ -122,7 +122,7 @@ Claude termina la tarea
       ↓  hook Stop
 preflight  →  levanta Docker / Supabase si están caídos
       ↓
-verify     →  formato · lint · tipos · tests · build
+verify     →  formato · lint · tipos · tests · build · Dockerfile
       ↓  bloquea si falla
 refresh    →  Opus 5 revalida solo los hallazgos que el cambio pudo alcanzar
       ↓  fail-soft
@@ -202,7 +202,7 @@ Los escribe `init-project.sh`, salvo donde se indica.
 Aparte del stack, un repositorio que tenga un `Dockerfile` también se lintea con hadolint antes de los chequeos del stack. Dos decisiones mantienen ese control usable en vez de molesto:
 
 - **Si hadolint no está instalado, avisa y sigue.** Una herramienta ausente no es un defecto de código, y fallar el build por eso es exactamente cómo se termina apagando un gate.
-- **Falla en `warning` para arriba, no en el `info` que hadolint usa por defecto.** El default hace fallar un Dockerfile perfectamente correcto por notas advertencias menores. Los warnings igual atrapan lo que importa: imagen base `latest`, paquetes apt sin versión. Se cambia con `HARNESS_HADOLINT_THRESHOLD`.
+- **Falla en `warning` para arriba, no en el `info` que hadolint usa por defecto.** El default hace fallar un Dockerfile perfectamente correcto por notas meramente informativas. Los warnings igual atrapan lo que importa: imagen base `latest`, paquetes apt sin versión. Se cambia con `HARNESS_HADOLINT_THRESHOLD`.
 
 En un proyecto Node corre los chequeos más fuertes que ya tenés, primero los baratos y no mutantes, deteniéndose en la primera falla:
 
