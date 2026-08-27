@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Uninstall now restores the `model` and `effortLevel` that were set before the first install instead of deleting them. Previously a user with a custom model silently lost it on install/uninstall.
+- A value the user sets after installing is treated as deliberate and survives uninstall.
+- Uninstall no longer leaves empty `hooks` containers behind, so a settings file it created nothing in round-trips back to its original content.
+- `settings.json` is now written through a temporary file and an atomic rename, so an interrupted or failing write cannot truncate it. File permissions are preserved.
+- A malformed `settings.json` is now reported as a single error instead of a raw stack trace, and is left untouched.
+- Added round-trip tests for install and uninstall under `tests/`.
+
 ## 6.0.0
 
 - Added automatic local-environment preflight through `.claude/preflight.sh`.

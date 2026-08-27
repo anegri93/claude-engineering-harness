@@ -345,8 +345,21 @@ repo/
 │   ├── refresh-baseline.sh
 │   ├── render-project-analysis.mjs
 │   ├── render-baseline-refresh.mjs
-│   └── remove-settings-hook.mjs
+│   ├── remove-settings-hook.mjs
+│   └── settings-io.mjs
+├── harness-state.json
 └── settings.json
+```
+
+`harness-state.json` records the `model` and `effortLevel` that were in `settings.json` before the first install, so uninstall can put them back. It is written once, never overwritten by a repeat install, and deleted by uninstall.
+
+## Tests
+
+The scripts that edit `~/.claude/settings.json` are covered by round-trip tests that run
+them as real subprocesses against a throwaway `HOME`. They need nothing but Node 20+:
+
+```bash
+node --test "tests/*.test.mjs"
 ```
 
 ## Cost and latency behavior

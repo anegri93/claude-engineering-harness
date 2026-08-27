@@ -91,7 +91,7 @@ chmod +x "$CLAUDE_DIR/hooks/verify-project.sh" "$CLAUDE_DIR/hooks/mark-baseline-
 mkdir -p "$CLAUDE_DIR/harness/project-template"
 cp -R "$SOURCE_DIR/project-template/." "$CLAUDE_DIR/harness/project-template/"
 mkdir -p "$CLAUDE_DIR/harness-tools"
-for tool in init-project.sh refresh-baseline.sh render-project-analysis.mjs render-baseline-refresh.mjs remove-settings-hook.mjs; do
+for tool in init-project.sh refresh-baseline.sh render-project-analysis.mjs render-baseline-refresh.mjs remove-settings-hook.mjs settings-io.mjs; do
   install_file "$SOURCE_DIR/tools/$tool" "$CLAUDE_DIR/harness-tools/$tool"
 done
 chmod +x "$CLAUDE_DIR/harness-tools/init-project.sh" "$CLAUDE_DIR/harness-tools/refresh-baseline.sh" "$CLAUDE_DIR/harness-tools/render-project-analysis.mjs" "$CLAUDE_DIR/harness-tools/render-baseline-refresh.mjs"
