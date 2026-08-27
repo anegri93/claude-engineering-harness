@@ -24,4 +24,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: shellcheck install.sh uninstall.sh src/hooks/*.sh tools/*.sh project-template/.claude/*.sh
+      # Pinned rather than using the runner's preinstalled shellcheck: the two versions
+      # disagree on which code an unreachable command gets, so an unpinned job fails on
+      # findings that are clean locally.
+      - run: |
+          docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:v0.11.0 \
+            install.sh uninstall.sh src/hooks/*.sh tools/*.sh project-template/.claude/*.sh
