@@ -1,0 +1,53 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "finding_reviews": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "finding_id": { "type": "string" },
+          "status": { "type": "string", "enum": ["open", "changed", "resolved", "stale"] },
+          "severity": { "type": "string", "enum": ["critical", "high", "medium", "low"] },
+          "title": { "type": "string" },
+          "detail": { "type": "string" },
+          "evidence_paths": {
+            "type": "array",
+            "maxItems": 10,
+            "items": { "type": "string" }
+          },
+          "recommendation": { "type": "string" },
+          "resolution": { "type": "string" }
+        },
+        "required": ["finding_id", "status", "severity", "title", "detail", "evidence_paths", "recommendation", "resolution"]
+      }
+    },
+    "new_findings": {
+      "type": "array",
+      "maxItems": 5,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "severity": { "type": "string", "enum": ["critical", "high", "medium", "low"] },
+          "title": { "type": "string" },
+          "detail": { "type": "string" },
+          "evidence_paths": {
+            "type": "array",
+            "maxItems": 10,
+            "items": { "type": "string" }
+          },
+          "recommendation": { "type": "string" }
+        },
+        "required": ["severity", "title", "detail", "evidence_paths", "recommendation"]
+      }
+    },
+    "full_reanalysis_recommended": { "type": "boolean" },
+    "full_reanalysis_reason": { "type": "string" },
+    "summary": { "type": "string" }
+  },
+  "required": ["finding_reviews", "new_findings", "full_reanalysis_recommended", "full_reanalysis_reason", "summary"]
+}

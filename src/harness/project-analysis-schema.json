@@ -1,0 +1,122 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "summary": { "type": "string" },
+    "architecture_summary": { "type": "string" },
+    "key_modules": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "path": { "type": "string" },
+          "responsibility": { "type": "string" },
+          "depends_on": {
+            "type": "array",
+            "maxItems": 8,
+            "items": { "type": "string" }
+          },
+          "evidence_paths": {
+            "type": "array",
+            "maxItems": 8,
+            "items": { "type": "string" }
+          }
+        },
+        "required": ["path", "responsibility", "depends_on", "evidence_paths"]
+      }
+    },
+    "always_on_rules": {
+      "type": "array",
+      "maxItems": 12,
+      "items": { "type": "string" }
+    },
+    "business_invariants": {
+      "type": "array",
+      "maxItems": 12,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "rule": { "type": "string" },
+          "evidence_paths": {
+            "type": "array",
+            "maxItems": 8,
+            "items": { "type": "string" }
+          }
+        },
+        "required": ["rule", "evidence_paths"]
+      }
+    },
+    "rule_groups": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "filename": { "type": "string" },
+          "title": { "type": "string" },
+          "paths": {
+            "type": "array",
+            "maxItems": 12,
+            "items": { "type": "string" }
+          },
+          "rules": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 16,
+            "items": { "type": "string" }
+          },
+          "evidence_paths": {
+            "type": "array",
+            "maxItems": 12,
+            "items": { "type": "string" }
+          },
+          "rationale": { "type": "string" }
+        },
+        "required": ["filename", "title", "paths", "rules", "evidence_paths", "rationale"]
+      }
+    },
+    "risks": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": ["critical", "high", "medium", "low"]
+          },
+          "title": { "type": "string" },
+          "detail": { "type": "string" },
+          "evidence_paths": {
+            "type": "array",
+            "maxItems": 8,
+            "items": { "type": "string" }
+          },
+          "recommendation": { "type": "string" }
+        },
+        "required": ["severity", "title", "detail", "evidence_paths", "recommendation"]
+      }
+    },
+    "confidence_notes": {
+      "type": "array",
+      "maxItems": 10,
+      "items": { "type": "string" }
+    }
+  },
+  "required": [
+    "summary",
+    "architecture_summary",
+    "key_modules",
+    "always_on_rules",
+    "business_invariants",
+    "rule_groups",
+    "risks",
+    "confidence_notes"
+  ]
+}

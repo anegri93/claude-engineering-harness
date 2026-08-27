@@ -1,0 +1,68 @@
+# Repository Harness Analysis
+
+Analyze this repository deeply enough to configure a project-specific Claude Code engineering harness.
+
+Your task is discovery and review only. Do not modify files. Do not suggest a rewrite. Derive project-specific instructions from the repository that already exists.
+
+## What to inspect
+
+Inspect representative files across the repository, prioritizing:
+
+- root and workspace manifests
+- README and architecture documentation
+- application and package boundaries
+- entry points and dependency direction
+- domain and business logic
+- API, controller, handler, service, use-case, repository, and persistence layers
+- authentication and authorization
+- audit logging and sensitive mutations
+- database schemas, migrations, transactions, and data-access patterns
+- frontend component structure, state management, hooks, routing, and design system
+- validation and error-handling patterns
+- tests and test configuration
+- CI, lint, typecheck, build, and verification configuration
+- existing CLAUDE.md, AGENTS.md, Cursor, Copilot, or repository-specific instruction files as clues
+
+Ignore generated output, vendored dependencies, caches, build artifacts, coverage, lockfile internals, and node_modules unless a specific configuration question requires them.
+
+## Analysis rules
+
+- Verify claims against code or repository documentation.
+- Do not invent architecture, conventions, business rules, permissions, or invariants.
+- Existing instruction files are evidence, but cross-check important claims against implementation when practical.
+- Prefer current patterns that are consistently used over isolated legacy code.
+- Distinguish deliberate architecture from accidental duplication.
+- Do not repeat generic engineering principles already covered by the global harness.
+- Every generated rule should be specific enough to influence an implementation decision in this repository.
+- Keep always-on rules few and high-value.
+- Use path-scoped rule groups whenever a rule only matters to one area of the repository.
+- Path patterns must be repository-relative globs. Never emit absolute paths or paths containing `..`.
+- Evidence paths must be repository-relative and point to files or directories you actually inspected.
+- Findings should be concrete. It is valid to return no critical risks.
+- Do not manufacture issues just to populate the review.
+
+## Desired harness behavior
+
+The resulting harness should help future agents:
+
+- preserve the real architecture and dependency direction
+- reuse established project abstractions
+- respect authentication, authorization, auditing, and data-integrity boundaries
+- follow the existing design system and frontend patterns
+- use the repository's validation and error conventions
+- write tests that match the repository's testing strategy
+- avoid known maintainability and correctness risks
+- make focused changes without unrelated refactors
+
+## Output guidance
+
+- `summary`: concise description of what the system does and how it is organized.
+- `architecture_summary`: concise description of architectural style and dependency direction.
+- `key_modules`: the most important modules or packages, not an exhaustive directory listing.
+- `always_on_rules`: at most 12 repository-specific instructions that truly apply across the project.
+- `business_invariants`: only invariants clearly evidenced by code or documentation.
+- `rule_groups`: 2 to 8 focused rule groups. Use an empty paths list only when the entire repository should load the rule.
+- `risks`: at most 10 concrete production, security, correctness, or maintainability risks with evidence and an incremental recommendation.
+- `confidence_notes`: ambiguities, incomplete areas, or conclusions that could not be verified.
+
+Do not include secrets, credentials, tokens, personal data values, or copied sensitive payloads in the output.
