@@ -2,57 +2,78 @@
 
 [English](README.md) · [Español](README.es.md)
 
-Turns Claude Code from an assistant that writes plausible code into one that works to a fixed engineering standard, knows your repository, and cannot call a change done until the checks actually pass.
+### Your coding agent stops guessing, stops forgetting, and stops saying "done" without proof.
 
-Personal tooling, built for my own projects. Installs globally into `~/.claude` and initializes per repository.
+`claude-engineering-harness` is a personal Claude Code harness. It installs a fixed engineering standard into every session, generates rules from a semantic read of your actual repository, gates the end of every task on verification that really ran, and keeps a baseline of known risks that ages with the code instead of going stale.
 
-## Why this exists
+Personal tooling, built for my own projects. It installs globally into `~/.claude` and initializes per repository.
 
-A coding agent left to its own devices has four recurring failure modes. Each layer of this harness exists to close one of them.
+---
 
-**It says "done" without proof.** The agent finishes, summarizes confidently, and the lint or the test suite was never run. The harness gates the end of every task on real verification, and forbids claiming a check was run when it wasn't.
+## Contents
 
-**It rediscovers the repository every session.** Broad, shallow exploration, one file at a time, paying for the same orientation over and over. The harness makes Graft the standard context layer, so the agent starts from a repository map and a blast radius instead of a guess.
+- [Quick start](#quick-start)
+- [The problem](#the-problem)
+- [What the harness does](#what-the-harness-does)
+- [The engineering standard](#the-engineering-standard)
+- [What runs when](#what-runs-when)
+- [What each generated file is for](#what-each-generated-file-is-for)
+- [What verification actually runs](#what-verification-actually-runs)
+- [Tests](#tests)
+- [Baseline states](#baseline-states)
+- [Graft and the harness](#graft-and-the-harness)
+- [Cost](#cost)
+- [Backups](#backups)
+- [Uninstall](#uninstall)
 
-**It forgets what is already known to be wrong.** Risks found in one session are gone by the next. The harness keeps a living baseline of findings with stable IDs, and revalidates the ones a change could plausibly have affected.
-
-**Verification gets disabled the moment it is inconvenient.** Local infrastructure is down, the tests "fail", and the gate becomes noise to be turned off. The harness distinguishes a broken environment from broken code, and starts the environment itself before deciding anything is broken.
-
-## What you get
-
-- A permanent engineering standard applied to every change, with an explicit priority order for tradeoffs.
-- Repository-specific rules generated from a semantic analysis of your actual code, not generic advice.
-- A verification gate on task completion: format, lint, types, tests, build.
-- Automatic startup of local infrastructure before verification decides anything failed.
-- A living baseline of engineering findings that ages and updates instead of going stale.
-- A review skill and an independent reviewer agent for production-readiness passes.
+---
 
 ## Quick start
 
-Install globally:
-
 ```bash
 chmod +x install.sh
-./install.sh
+./install.sh                              # global standard, hooks, skill, agent
+~/.claude/harness-tools/init-project.sh   # from inside any repo you want covered
 ```
 
-Restart Claude Code, then from anywhere inside a repository you want covered:
+That is the whole setup. `install.sh` writes the standard into `~/.claude` and wires two hooks into your Claude Code settings. `init-project.sh` reads the repository, writes rules specific to it, generates the baseline and the verification script, and switches the Stop gate on once it has proven verification works. From the next session on, the harness rides along.
 
-```bash
-~/.claude/harness-tools/init-project.sh
-```
+Restart Claude Code after installing. Rerun `init-project.sh` after upgrading the harness — it regenerates the project files and keeps the existing baseline state.
 
-That analyzes the repository, writes `.claude/rules/`, generates the baseline and the verification script, and turns on the Stop gate once verification passes. From then on it is automatic.
+Needs Node 20+, Git, and npm for Graft. Nothing is clobbered: the installer preserves unrelated Claude Code configuration and backs up every file it touches under `~/.claude/harness-backups/<timestamp>/`.
 
-Requires Node 20+, Git, and npm for Graft. The installer preserves unrelated Claude Code configuration and backs up every file it touches under `~/.claude/harness-backups/<timestamp>/`.
+---
 
-Rerun `init-project.sh` after upgrading the harness. It regenerates the project files and keeps the existing living baseline state.
+## The problem
+
+Your agent finishes a task and tells you it is done. The lint never ran. The test suite never ran. The summary is confident, the diff is plausible, and nothing checked it. You find out later.
+
+Underneath that, three more things go wrong every session:
+
+- **Blind.** It re-explores the repo from zero, one grep and one file at a time, rebuilding a picture it had an hour ago and threw away.
+- **Forgetful.** A risk found on Tuesday is gone by Wednesday. Nothing carries across sessions, so the same weak spot gets rediscovered or silently reintroduced.
+- **Disabled.** Docker was down, so the tests "failed", so the verification gate became noise, so you turned it off. Now nothing is checked at all.
+
+A senior engineer holds a standard, remembers what is fragile, and does not claim a check they skipped. The harness makes the agent do the same, mechanically, instead of hoping.
+
+---
+
+## What the harness does
+
+- **A fixed standard, every session.** One engineering policy loaded into every repository, with an explicit priority order for tradeoffs and an explicit rule against claiming unverified work is verified.
+- **Rules from your code, not from a template.** `init-project.sh` runs a read-only semantic analysis of the repository with Opus 5 and writes `.claude/rules/` describing this codebase's architecture, boundaries and invariants.
+- **A gate that cannot be talked past.** The Stop hook runs format, lint, types, tests and build before the task can end. Failure blocks.
+- **The environment gets started, not blamed.** Before anything is called broken, a preflight brings up Docker and Supabase and waits. A stopped container is not a failing test.
+- **Findings that survive the session.** Risks get stable IDs and are revalidated when a change could plausibly have touched them. Fixed ones flip to `[RESOLVED]`, obsolete ones to `[STALE]`.
+- **A second opinion on demand.** A review skill and an independent reviewer agent, both read-only, for production-readiness passes.
+
+---
 
 ## The engineering standard
 
-The core of the harness is a standard loaded into every session. It is opinionated on purpose.
+The core of the harness is `~/.claude/harness/engineering.md`, loaded into every session. It is opinionated on purpose.
 
-When tradeoffs exist, it fixes the priority order:
+When tradeoffs exist, it fixes the order:
 
 ```text
 1. Correctness
@@ -63,206 +84,164 @@ When tradeoffs exist, it fixes the priority order:
 6. Performance when supported by evidence
 ```
 
-Performance sits last deliberately: it is optimized when measured, not when suspected.
+Performance sits last deliberately. It gets optimized when measured, not when suspected.
 
-The standard also requires the agent to:
+The rest of the standard is what a reviewer would ask for anyway:
 
-- **Understand before changing.** Read the implementation, identify callers, dependencies and side effects. Never implement from a filename or an assumption.
-- **Design for failure.** Invalid input, stale data, timeouts, partial failures, duplicate operations, retries, concurrency, interrupted operations. Never silently swallow an error.
-- **Treat external input as untrusted.** Validate at boundaries, authentication is not authorization, parameterize queries, never log credentials, sanitize errors crossing a trust boundary.
-- **Hold scope.** No unrelated refactors, no speculative abstractions, no redesigning working architecture without a concrete reason.
-- **Test behavior and risk**, not implementation details. Never weaken a valid test to make a change pass.
-- **Finish honestly.** Inspect the final diff, run format, lint, types, tests and build, then review the diff as if approving someone else's work for production. If a step could not run, say exactly what was not verified and why.
+| Rule | What it demands |
+|---|---|
+| **Understand before changing** | Read the implementation. Identify callers, dependencies, side effects. Never implement from a filename or an assumption. |
+| **Design for failure** | Invalid input, stale data, timeouts, partial failures, duplicate operations, retries, concurrency, interrupted operations. Never swallow an error in silence. |
+| **Untrusted input** | Validate at boundaries. Authentication is not authorization. Parameterize queries. Never log credentials. Sanitize errors that cross a trust boundary. |
+| **Hold scope** | No unrelated refactors. No speculative abstractions. No redesigning working architecture without a concrete reason. |
+| **Test risk, not shape** | Cover business rules, edge cases, failure paths, regressions, concurrency. Never weaken a valid test to make a change pass. |
+| **Finish honestly** | Inspect the final diff, run format, lint, types, tests and build, then review the diff as if approving someone else's work for production. If a step could not run, say exactly what was not verified and why. |
 
-That last rule is the one the Stop gate enforces mechanically rather than trusting.
+That last row is the one the Stop gate enforces mechanically rather than trusting.
 
-The installer also sets the model and effort used for this work:
+The installer also pins the model and effort this work runs at:
 
 ```text
 Model:  claude-opus-5
 Effort: high
 ```
 
-## How it works
+---
 
-Four layers, each doing one job.
+## What runs when
 
-```text
-Engineering standard   fixed policy, every session, every repository
-Project rules          generated from semantic analysis of this repository
-Verification gate      environment preflight, then format/lint/types/tests/build
-Living baseline        findings that persist across sessions and age with the code
-```
-
-They meet at the end of a task:
+Four things fire on their own. Nothing else needs running by hand.
 
 ```text
-Claude edits code
+Claude edits a file
+      ↓  PostToolUse hook · no model call
+records which files the task touched
       ↓
-PostToolUse hook records affected files
+Claude finishes the task
+      ↓  Stop hook
+preflight  →  starts Docker / Supabase if they are down
       ↓
-Graft keeps repository context fresh
-      ↓
-Claude reaches Stop
-      ↓
-verification gate passes
-      ↓
-Graft builds change-impact context
-      ↓
-Claude Opus 5 · high effort
-revalidates only affected findings
-      ↓
-OPEN / CHANGED / RESOLVED / STALE
-+ concrete new risks from the changed scope
-      ↓
-engineering-baseline.md is updated only when needed
+verify     →  format · lint · types · tests · build
+      ↓  blocks on failure
+refresh    →  Opus 5 revalidates only the findings the change could reach
+      ↓  fail-soft
+engineering-baseline.md updated only if something changed
 ```
 
-The baseline refresh is incremental. It does not re-audit the whole repository after every task, and a task that edited nothing relevant triggers no model call at all.
+**PostToolUse** fires on `Write`, `Edit`, `MultiEdit` and `NotebookEdit`, and records repository-relative paths into `~/.claude/harness-runtime/<project>/`. It calls no model and touches no code. It exists so the refresh knows the blast radius without guessing. It ignores its own bookkeeping — edits to the baseline files, to `.claude/rules/`, to `verify.sh`, and to `graft/`, `node_modules/`, `dist/`, `build/` and `coverage/` never mark the project dirty.
 
-The baseline is advisory, not authoritative. The standard explicitly instructs Claude to verify a finding against current source and tests before acting on it, because a finding written three weeks ago may already be fixed.
+**The Stop hook** runs verify first and refresh second, and the order is the point. Verification failure blocks the task. Refresh failure is fail-soft: it never turns a good change into a failed task, and the dirty state is kept so the next Stop retries.
 
-## What runs at each step
-
-### 1. While Claude edits — PostToolUse hook
-
-Fires on `Write`, `Edit`, `MultiEdit` and `NotebookEdit`. Records the repository-relative paths the task touched into `~/.claude/harness-runtime/`.
-
-It calls no model and does not modify the repository. It exists so the later baseline refresh knows the blast radius without having to guess.
-
-### 2. Task ends — Stop hook
-
-Runs two things in a fixed order, and the order is the point:
-
-```text
-1. verify the project
-2. only if verification passed, refresh affected baseline findings
-```
-
-Verification failure is blocking. A baseline refresh failure is fail-soft: it never turns a successful code change into a failed task, and the dirty state is kept so a later Stop retries.
-
-### 3. Before verification — environment preflight
-
-Runs `.claude/preflight.sh` first, so a stopped local dependency is never mistaken for broken code. It checks, in order:
-
-- Is Docker installed but not running? On macOS, start Docker Desktop and wait.
-- Does `supabase/config.toml` exist? If the local stack is down, run `supabase start` and wait until ready.
-- Does the repository actually reference Docker Compose in `package.json` or `scripts/`, or is `.claude/auto-compose` present? Only then bring Compose up.
-
-Both waits are bounded, and the defaults are overridable:
+**The preflight** checks whether Docker is installed but stopped, whether `supabase/config.toml` exists with the stack down, and whether the repo genuinely references Docker Compose. Both waits are bounded and overridable:
 
 ```bash
 HARNESS_DOCKER_WAIT_SECONDS=120
 HARNESS_SUPABASE_WAIT_SECONDS=180
+HARNESS_AUTO_INFRA=0 .claude/verify.sh   # check only, start nothing
 ```
 
-It never resets or deletes a local database to recover from a failed start. It stops and reports the environment problem. To make a run check-only without starting anything:
+It never resets or deletes a local database to recover from a failed start. It stops and reports the environment problem instead.
 
-```bash
-HARNESS_AUTO_INFRA=0 .claude/verify.sh
-```
+**The refresh** hands Opus 5 the current structured baseline plus Graft's change-impact context, restricted to `Read`, `Glob` and `Grep`. It cannot edit. It is asked for two things and nothing else: revalidate findings the change could plausibly have affected, and flag concrete new risks inside the blast radius.
 
-### 4. Verification — `.claude/verify.sh`
+---
 
-Picks the package manager from the lockfile: `pnpm-lock.yaml`, `yarn.lock`, `bun.lockb` or `bun.lock`, otherwise npm.
+## What each generated file is for
 
-Then runs the strongest checks the project already has, cheapest and non-mutating first, stopping at the first failure:
+### In your repository
+
+Written by `init-project.sh`, except where noted.
+
+| File | What it is |
+|---|---|
+| `CLAUDE.md` | Your project instructions. The harness updates only its own managed block and preserves everything else you wrote. |
+| `.claude/rules/project-architecture.md` | The architecture profile Opus wrote after reading your repository: modules, boundaries, data flow, invariants. This is the file that makes advice specific instead of generic. |
+| `.claude/rules/harness-*.md` | Conditional rules that load only for matching paths. Backend integrity, security boundaries, testing strategy, and whatever else the analysis judged this repo needs. |
+| `.claude/engineering-baseline.md` | The human-readable list of known engineering risks, each with a stable ID and a state. This is the file you read. |
+| `.claude/engineering-baseline.json` | The same findings as machine state. It exists so a finding keeps its identity across refreshes instead of being rewritten as a new one every time. |
+| `.claude/verify.sh` | The verification command for this project. Detects your package manager, runs the checks you actually have. Edit it freely — it is yours, and a non-Node project must customize it. |
+| `.claude/preflight.sh` | Brings up local infrastructure before verification judges anything. Generated only if you do not already have one; a custom preflight is never overwritten. |
+| `.claude/verify-on-stop` | An empty marker file. Its presence is what enables the Stop verification gate. Delete it to turn the gate off for this repo. |
+| `.claude/baseline-refresh-on-stop` | The same idea for the baseline refresh. Both markers are written only after that step was proven to work once, so a repo where verification cannot run never gets a gate that fails forever. |
+| `.claude/auto-compose` | Optional, created by you. Its presence tells the preflight to bring up Docker Compose in a repo that does not otherwise reference it. |
+| `.claude/settings.json` | Project-level Claude Code settings. |
+| `.mcp.json`, `.claude/skills/graft/`, `.claude/helpers/` | Written by `graft init`, not by the harness. The harness backs them up first, then lets Graft own them. |
+
+### Global, in `~/.claude`
+
+| File | What it is |
+|---|---|
+| `harness/engineering.md` | The engineering standard itself. The single most important file in the repo. |
+| `harness/project-analysis-prompt.md` + `.json` | The prompt and JSON schema for the initial repository analysis. The schema is what forces structured output instead of prose. |
+| `harness/baseline-refresh-prompt.md` + `.json` | The same pair for the incremental refresh. |
+| `harness/project-template/` | The `CLAUDE.md`, `verify.sh`, `preflight.sh` and architecture-rule skeletons that `init-project.sh` copies and fills in. |
+| `rules/harness-typescript.md` · `-react` · `-tests` · `-sql` | Language rules that load automatically for matching file paths in any project. |
+| `skills/engineering-review/SKILL.md` | The review skill: a production-readiness pass over correctness, security, maintainability, scalability and test quality. |
+| `agents/engineering-code-reviewer.md` | A read-only reviewer agent that cannot edit, for an independent second opinion on a finished change. |
+| `hooks/mark-baseline-dirty.sh` | The PostToolUse hook. Records edited files, calls no model. |
+| `hooks/verify-project.sh` | The Stop hook. Runs preflight, verification, then refresh. |
+| `harness-tools/` | `init-project.sh` and `refresh-baseline.sh`, plus the renderers that turn structured model output into Markdown, and the settings helpers used by install and uninstall. |
+| `harness-runtime/<project>/` | Per-project dirty state written by the PostToolUse hook and consumed by the refresh. Disposable. |
+| `harness-state.json` | The `model` and `effortLevel` your `settings.json` had before the first install, so uninstall can put them back. Written once, never overwritten by a repeat install, deleted by uninstall. |
+
+---
+
+## What verification actually runs
+
+`.claude/verify.sh` picks your package manager from the lockfile — `pnpm-lock.yaml`, `yarn.lock`, `bun.lockb` or `bun.lock`, otherwise npm — then runs the strongest checks the project already has, cheapest and non-mutating first, stopping at the first failure:
 
 ```text
-fmt:check       formatting, non-mutating
+fmt:check       formatting
 format:check    formatting, alternate script name
 lint            static analysis
 typecheck       falls back to test:types
-test            the project's own suite
+test            your suite
 build           last, most expensive
 ```
 
 Every one of those is skipped when `package.json` has no such script. Nothing is invented and nothing is guessed. A project with only `lint` and `test` runs exactly those two.
 
-For a non-Node project, verify.sh exits and asks you to customize it. That is deliberate: silently verifying nothing is worse than saying it cannot.
+For a non-Node project, `verify.sh` exits and asks you to customize it. That is deliberate. Silently verifying nothing is worse than saying it cannot.
 
-### 5. Baseline refresh — `refresh-baseline.sh`
-
-Receives the edited files, asks Graft for change-impact context, and hands Claude the current structured baseline.
-
-The model runs restricted to read-only tools:
-
-```text
-Read
-Glob
-Grep
-```
-
-It cannot edit, and it is asked for exactly two things: revalidate existing findings the change could plausibly have affected, and detect concrete new risks inside the changed blast radius. It does not re-audit unrelated findings.
-
-### 6. Repository initialization — `init-project.sh`
-
-The expensive one, run by hand. It:
-
-1. Resolves the Git root.
-2. Refuses to initialize anything inside `~/.claude`.
-3. Detects stack, package manager, monorepo shape, and verification commands.
-4. Installs or wires Graft with `graft init --agents claude`.
-5. Uses Graft to build repository orientation context.
-6. Runs a read-only semantic analysis with Claude Opus 5 and high effort.
-7. Generates repository-specific `.claude/rules/`.
-8. Preserves existing `CLAUDE.md` content and updates only the harness-managed block.
-9. Generates `.claude/engineering-baseline.md`.
-10. Generates `.claude/engineering-baseline.json` with stable finding IDs.
-11. Generates or preserves `.claude/preflight.sh`.
-12. Generates `.claude/verify.sh` and wires the preflight into it.
-13. Prepares required local verification infrastructure.
-14. Runs the baseline verification.
-15. Enables `.claude/verify-on-stop` when environment preparation and verification pass.
-16. Enables `.claude/baseline-refresh-on-stop` when semantic analysis and verification pass.
-
-Steps 15 and 16 matter: the automatic gates switch on only if they were proven to work once. A repository where verification cannot run does not get a gate that fails forever.
+---
 
 ## Tests
 
-Two separate things share the word, so worth being exact.
+Two different things share the word, so worth being exact.
 
-**In your repository, the harness runs tests, it does not write them.** Verification executes your existing `test` script through your package manager. It does not generate tests, does not invent a test command, and does not treat your suite as optional. If you have no `test` script, that step is skipped and the other checks still run.
+**In your repository, the harness runs tests. It does not write them.** Verification executes your existing `test` script through your package manager. It does not generate tests, does not invent a test command, and does not treat your suite as optional. No `test` script means that step is skipped and the rest still run.
 
-What the harness contributes to testing is policy. When Claude writes tests under `**/*.test.*`, `**/*.spec.*`, `**/test/**` or `**/tests/**`, these rules load automatically:
+What the harness contributes is policy. When Claude writes tests under `**/*.test.*`, `**/*.spec.*`, `**/test/**` or `**/tests/**`, these load automatically:
 
 - Test externally meaningful behavior and invariants, not implementation details.
 - Keep tests deterministic and independent of execution order.
 - Avoid arbitrary sleeps and timing-sensitive assertions where deterministic synchronization is possible.
-- Name tests after the behavior or risk they protect.
+- Name each test after the behavior or risk it protects.
 - A regression test must fail for the original bug and pass for the fix.
 - Do not mock the unit under test. Mock external boundaries only when it improves determinism without hiding the behavior being validated.
 - Never weaken or delete a valid test to make a change pass.
 
-**This repository has its own tests.** The scripts that edit `~/.claude/settings.json` are covered by round-trip tests that run them as real subprocesses against a throwaway `HOME`, because the risk they carry is what they do to a real config file on disk. They need nothing but Node 20+:
+**This repository has its own tests.** The scripts that edit `~/.claude/settings.json` are covered by round-trip tests that run them as real subprocesses against a throwaway `HOME`, because the risk they carry is what they do to a real config file on disk. Nothing but Node 20+ required:
 
 ```bash
 node --test tests/*.test.mjs
 ```
 
-CI runs them on Node 20, 22 and 24, and lints every shell script with a pinned shellcheck.
+CI runs them on Node 20, 22 and 24 and lints every shell script with a pinned shellcheck.
+
+---
 
 ## Baseline states
 
-Findings receive stable IDs:
-
-```text
-F001
-F002
-F003
-```
-
-The Markdown baseline then evolves:
+Findings get stable IDs — `F001`, `F002`, `F003` — and a state that moves as the code does:
 
 ```text
 [OPEN]     finding still exists
-[CHANGED]  original finding was partly fixed or narrowed
+[CHANGED]  partly fixed or narrowed
 [RESOLVED] current source and tests show it is fixed
-[STALE]    old claim is no longer supportable
-[NEW]      a concrete risk was introduced or discovered in changed scope
+[STALE]    the old claim is no longer supportable
+[NEW]      a concrete risk introduced or found in changed scope
 ```
-
-Example:
 
 ```text
 Before
@@ -272,120 +251,45 @@ After a verified fix
 [RESOLVED] HIGH — Health endpoint returns 200 while degraded · F001
 ```
 
-`.claude/engineering-baseline.json` is the machine-readable state that preserves finding identity across refreshes.
+The baseline is advisory, not authoritative. The standard tells Claude to verify a finding against current source and tests before acting on it, because a finding written three weeks ago may already be fixed.
 
-## Full reanalysis
+Refresh maintains findings, not the architecture model. If Opus decides a task materially changed the architecture, the baseline records `Full harness reanalysis recommended` and you rerun `init-project.sh`. That split is why an ordinary feature never pays for a full repository analysis.
 
-Incremental refresh maintains findings, not the entire architecture model.
-
-If Opus determines a task materially changed project architecture, the baseline records:
-
-```text
-Full harness reanalysis recommended
-```
-
-Regenerating architecture and conditional project rules is still done by `init-project.sh`. This distinction prevents every ordinary feature from paying for a full repository analysis.
-
-You can force a refresh by hand for diagnostics, though normal use never requires it:
-
-```bash
-~/.claude/harness-tools/refresh-baseline.sh --force
-```
+---
 
 ## Graft and the harness
 
-Responsibilities are separate:
+Two layers, no overlap:
 
 ```text
-Graft
-  repository map
-  symbols
-  callers
-  relationships
-  blast radius
+Graft                        Harness
+  repository map               engineering policy
+  symbols                      project-specific rules
+  callers                      business invariants
+  relationships                living findings
+  blast radius                 verification
   freshness
-
-Harness
-  engineering policy
-  project-specific rules
-  business invariants
-  living findings
-  verification
-
-Claude Code
-  implementation and reasoning using both layers
 ```
 
-Graft evidence accelerates navigation. Critical security, correctness, business-rule and mutation decisions must still be verified against source.
+Graft answers *where things are and what they touch*. The harness decides *what good looks like and whether you are done*. Claude Code uses both.
 
-During install and project initialization the harness checks npm for a newer Graft release and upgrades only when the registry is ahead. It will not downgrade a locally installed build that is newer than npm latest.
+Graft evidence accelerates navigation. Critical security, correctness, business-rule and mutation decisions still get verified against source — the standard says so explicitly.
 
-## Typical initialized repository
+On install and on project init, the harness asks npm whether there is a newer Graft and upgrades only when the registry is ahead. It will not downgrade a local build that is newer than npm latest.
 
-```text
-repo/
-├── CLAUDE.md
-├── .mcp.json
-└── .claude/
-    ├── engineering-baseline.md
-    ├── engineering-baseline.json
-    ├── baseline-refresh-on-stop
-    ├── preflight.sh
-    ├── verify.sh
-    ├── verify-on-stop
-    ├── settings.json
-    ├── helpers/
-    ├── skills/
-    │   └── graft/
-    │       └── SKILL.md
-    └── rules/
-        ├── project-architecture.md
-        ├── harness-backend-integrity.md
-        ├── harness-security-boundaries.md
-        ├── harness-testing-strategy.md
-        └── ...
-```
+---
 
-## Global files
+## Cost
 
-```text
-~/.claude/
-├── CLAUDE.md
-├── harness/
-│   ├── engineering.md
-│   ├── project-analysis-prompt.md
-│   ├── project-analysis-schema.json
-│   ├── baseline-refresh-prompt.md
-│   ├── baseline-refresh-schema.json
-│   └── project-template/
-├── rules/
-├── skills/
-│   └── engineering-review/
-├── agents/
-│   └── engineering-code-reviewer.md
-├── hooks/
-│   ├── verify-project.sh
-│   └── mark-baseline-dirty.sh
-├── harness-tools/
-│   ├── init-project.sh
-│   ├── refresh-baseline.sh
-│   ├── render-project-analysis.mjs
-│   ├── render-baseline-refresh.mjs
-│   ├── remove-settings-hook.mjs
-│   └── settings-io.mjs
-├── harness-state.json
-└── settings.json
-```
+`init-project.sh` is the expensive call. It reads the repository deeply, once.
 
-`harness-state.json` records the `model` and `effortLevel` that were in `settings.json` before the first install, so uninstall can put them back. It is written once, never overwritten by a repeat install, and deleted by uninstall.
+After that, at most one incremental baseline analysis per coding task, and only when the task actually edited relevant files. Several edits in one task collapse into a single refresh. A task that edited nothing relevant makes no model call at all.
 
-## Cost and latency
-
-`init-project.sh` is the expensive operation, because it performs deep repository analysis.
-
-After initialization, the harness performs at most one incremental baseline analysis per coding task, and only when that task actually edited relevant files. Multiple edits within one task collapse into a single refresh. Tasks with no relevant edits trigger no model call.
+---
 
 ## Backups
+
+Nothing is overwritten without a copy first.
 
 ```text
 ~/.claude/harness-backups/            global installation
@@ -394,10 +298,18 @@ After initialization, the harness performs at most one incremental baseline anal
 ~/.claude/harness-project-analysis/   structured analysis archives
 ```
 
+---
+
 ## Uninstall
 
 ```bash
 ./uninstall.sh
 ```
 
-Removes harness-owned global files and hooks, and restores the model and effort settings that were in place before the first install. It preserves backup directories and does not uninstall Graft globally.
+Removes the harness's own global files and hooks, and restores the model and effort settings you had before the first install. Backup directories are preserved. Graft is left installed.
+
+---
+
+## License
+
+MIT. See [LICENSE](LICENSE).
