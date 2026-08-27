@@ -836,10 +836,22 @@ fi
 DOCKER_LINT_EOF
 )"
 
-awk -v block="$DOCKER_LINT_BLOCK" '
-  { print }
-  !inserted && /HARNESS_PREFLIGHT_DONE/ { print block; inserted = 1 }
-' "$VERIFY_FILE" > "$VERIFY_FILE.tmp" && mv "$VERIFY_FILE.tmp" "$VERIFY_FILE"
+# Done in bash rather than through `awk -v`: awk applies escape processing to a -v
+# assignment and the awk shipped with macOS rejects a multi-line one outright, which
+# would drop the block without failing the script.
+DOCKER_LINT_INSERTED=false
+{
+  while IFS= read -r verify_line; do
+    printf '%s\n' "$verify_line"
+    if [[ "$DOCKER_LINT_INSERTED" == false && "$verify_line" == *HARNESS_PREFLIGHT_DONE* ]]; then
+      printf '%s\n' "$DOCKER_LINT_BLOCK"
+      DOCKER_LINT_INSERTED=true
+    fi
+  done < "$VERIFY_FILE"
+} > "$VERIFY_FILE.tmp" && mv "$VERIFY_FILE.tmp" "$VERIFY_FILE"
+if [[ "$DOCKER_LINT_INSERTED" == false ]]; then
+  echo "Warning: could not add the Dockerfile lint step to .claude/verify.sh." >&2
+fi
 
 chmod +x "$VERIFY_FILE"
 echo "Configured .claude/verify.sh from detected project commands."
