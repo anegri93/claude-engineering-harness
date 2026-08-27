@@ -19,6 +19,7 @@ Herramienta personal, hecha para mis propios proyectos. Se instala global en `~/
 - [Qué corre y cuándo](#qué-corre-y-cuándo)
 - [Para qué sirve cada archivo generado](#para-qué-sirve-cada-archivo-generado)
 - [Qué corre la verificación](#qué-corre-la-verificación)
+- [Proyecto nuevo](#proyecto-nuevo)
 - [Tests](#tests)
 - [Estados de la línea base](#estados-de-la-línea-base)
 - [Graft y el harness](#graft-y-el-harness)
@@ -40,7 +41,7 @@ Eso es toda la instalación. `install.sh` escribe el estándar en `~/.claude` y 
 
 Reiniciá Claude Code después de instalar. Volvé a correr `init-project.sh` después de actualizar el harness: regenera los archivos del proyecto y conserva el estado existente de la línea base.
 
-Necesita Node 20+, Git, y npm para Graft. No se pisa nada: el instalador preserva la configuración de Claude Code que no le pertenece y respalda cada archivo que toca en `~/.claude/harness-backups/<timestamp>/`.
+Necesita Node 20+ y npm para Graft. Git es opcional: fuera de un repositorio, el inicializador usa el directorio actual como raíz del proyecto. No se pisa nada: el instalador preserva la configuración de Claude Code que no le pertenece y respalda cada archivo que toca en `~/.claude/harness-backups/<timestamp>/`.
 
 ---
 
@@ -159,7 +160,7 @@ Los escribe `init-project.sh`, salvo donde se indica.
 | `.claude/rules/harness-*.md` | Reglas condicionales que se cargan solo para las rutas que coinciden. Integridad de backend, límites de seguridad, estrategia de testing, y lo que el análisis haya juzgado que este repo necesita. |
 | `.claude/engineering-baseline.md` | La lista legible de riesgos de ingeniería conocidos, cada uno con un ID estable y un estado. Este es el archivo que leés vos. |
 | `.claude/engineering-baseline.json` | Los mismos hallazgos como estado de máquina. Existe para que un hallazgo conserve su identidad entre refreshes en vez de reescribirse como uno nuevo cada vez. |
-| `.claude/verify.sh` | El comando de verificación de este proyecto. Detecta tu gestor de paquetes y corre los chequeos que realmente tenés. Editalo con libertad: es tuyo, y un proyecto que no sea Node tiene que personalizarlo. |
+| `.claude/verify.sh` | El comando de verificación de este proyecto, generado a partir del stack que detectó. Editalo con libertad: es tuyo. |
 | `.claude/preflight.sh` | Levanta la infraestructura local antes de que la verificación juzgue nada. Se genera solo si todavía no tenés uno; un preflight propio nunca se pisa. |
 | `.claude/verify-on-stop` | Un archivo marcador vacío. Su presencia es lo que habilita el gate de verificación en Stop. Borralo para apagar el gate en ese repo. |
 | `.claude/baseline-refresh-on-stop` | La misma idea para el refresh de línea base. Los dos marcadores se escriben recién después de probar una vez que ese paso funciona, así un repo donde la verificación no puede correr nunca se lleva un gate que falle para siempre. |
@@ -188,7 +189,17 @@ Los escribe `init-project.sh`, salvo donde se indica.
 
 ## Qué corre la verificación
 
-`.claude/verify.sh` elige tu gestor de paquetes según el lockfile — `pnpm-lock.yaml`, `yarn.lock`, `bun.lockb` o `bun.lock`, y si no, npm — y después corre los chequeos más fuertes que el proyecto ya tiene, primero los baratos y no mutantes, deteniéndose en la primera falla:
+`init-project.sh` escribe `.claude/verify.sh` según el stack que encuentra:
+
+| Detecta | Qué corre el script generado |
+|---|---|
+| `package.json` | Tus scripts reales, con el gestor de paquetes de tu lockfile. Un monorepo pnpm cae a `pnpm -r --if-present run` sobre lint, typecheck, test y build. |
+| Python | `ruff check`, `mypy`, `pytest`, los que estén instalados. |
+| `go.mod` | `go vet ./...`, `go test ./...` |
+| `Cargo.toml` | `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test` |
+| ninguno de esos | Un stub que sale 3 y te pide personalizarlo, en vez de fingir que verifica. |
+
+En un proyecto Node corre los chequeos más fuertes que ya tenés, primero los baratos y no mutantes, deteniéndose en la primera falla:
 
 ```text
 fmt:check       formato
@@ -201,7 +212,35 @@ build           último, el más caro
 
 Cada uno se saltea si `package.json` no tiene ese script. No se inventa nada y no se adivina nada. Un proyecto que solo tiene `lint` y `test` corre exactamente esos dos.
 
-En un proyecto que no es Node, `verify.sh` sale y te pide personalizarlo. Es deliberado. Verificar nada en silencio es peor que decir que no puede.
+Cuando no se detecta nada, el stub falla fuerte en vez de pasar. Es deliberado. Verificar nada en silencio es peor que decir que no puede.
+
+---
+
+## Proyecto nuevo
+
+`init-project.sh` analiza un repositorio y condiciona todo a verificarlo, así que necesita algo que analizar. Sobre un directorio vacío se degrada con honestidad en vez de fingir:
+
+1. Graft construye un grafo casi vacío, y el análisis semántico no tiene casi nada que describir.
+2. No detecta ningún stack, así que `verify.sh` es el stub que sale 3.
+3. La verificación falla, así que **no se escribe ninguno de los dos marcadores**: el gate de Stop y la línea base quedan apagados.
+4. El inicializador termina con código distinto de cero, diciéndote exactamente eso.
+
+Ese es el diseño funcionando. Un repositorio donde la verificación no puede pasar nunca se lleva un gate que fallaría en cada tarea.
+
+**No necesitás nada de eso para arrancar.** El estándar, las reglas de lenguaje, la skill de review y el agente revisor son globales: `install.sh` los pone en `~/.claude` y aplican a toda sesión en cualquier directorio, esté inicializado o no. Un proyecto recién creado ya tiene el estándar de ingeniería desde el primer prompt.
+
+La secuencia que funciona:
+
+```bash
+./install.sh                              # una vez en la vida
+# ... armás el proyecto: package.json, scripts, un test que pase ...
+git init && git add -A && git commit -m "initial"
+~/.claude/harness-tools/init-project.sh   # ahora sí hay algo que analizar
+```
+
+Corrélo cuando el proyecto ya tenga un script `test` o `lint` que pase y suficiente código para describir. Antes de ese punto la capa de proyecto no tiene nada para decir, y la capa global ya te está cubriendo.
+
+Si igual querés los archivos del proyecto en su lugar desde temprano, `--skip-verify` configura todo y deja los gates apagados a propósito. Volvés a correrlo sin ese flag cuando el proyecto pueda verificarse solo.
 
 ---
 

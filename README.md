@@ -19,6 +19,7 @@ Personal tooling, built for my own projects. It installs globally into `~/.claud
 - [What runs when](#what-runs-when)
 - [What each generated file is for](#what-each-generated-file-is-for)
 - [What verification actually runs](#what-verification-actually-runs)
+- [Starting a new project](#starting-a-new-project)
 - [Tests](#tests)
 - [Baseline states](#baseline-states)
 - [Graft and the harness](#graft-and-the-harness)
@@ -40,7 +41,7 @@ That is the whole setup. `install.sh` writes the standard into `~/.claude` and w
 
 Restart Claude Code after installing. Rerun `init-project.sh` after upgrading the harness — it regenerates the project files and keeps the existing baseline state.
 
-Needs Node 20+, Git, and npm for Graft. Nothing is clobbered: the installer preserves unrelated Claude Code configuration and backs up every file it touches under `~/.claude/harness-backups/<timestamp>/`.
+Needs Node 20+ and npm for Graft. Git is optional — outside a repository the initializer uses the current directory as the project root. Nothing is clobbered: the installer preserves unrelated Claude Code configuration and backs up every file it touches under `~/.claude/harness-backups/<timestamp>/`.
 
 ---
 
@@ -159,7 +160,7 @@ Written by `init-project.sh`, except where noted.
 | `.claude/rules/harness-*.md` | Conditional rules that load only for matching paths. Backend integrity, security boundaries, testing strategy, and whatever else the analysis judged this repo needs. |
 | `.claude/engineering-baseline.md` | The human-readable list of known engineering risks, each with a stable ID and a state. This is the file you read. |
 | `.claude/engineering-baseline.json` | The same findings as machine state. It exists so a finding keeps its identity across refreshes instead of being rewritten as a new one every time. |
-| `.claude/verify.sh` | The verification command for this project. Detects your package manager, runs the checks you actually have. Edit it freely — it is yours, and a non-Node project must customize it. |
+| `.claude/verify.sh` | The verification command for this project, generated from the stack it detected. Edit it freely — it is yours. |
 | `.claude/preflight.sh` | Brings up local infrastructure before verification judges anything. Generated only if you do not already have one; a custom preflight is never overwritten. |
 | `.claude/verify-on-stop` | An empty marker file. Its presence is what enables the Stop verification gate. Delete it to turn the gate off for this repo. |
 | `.claude/baseline-refresh-on-stop` | The same idea for the baseline refresh. Both markers are written only after that step was proven to work once, so a repo where verification cannot run never gets a gate that fails forever. |
@@ -188,7 +189,17 @@ Written by `init-project.sh`, except where noted.
 
 ## What verification actually runs
 
-`.claude/verify.sh` picks your package manager from the lockfile — `pnpm-lock.yaml`, `yarn.lock`, `bun.lockb` or `bun.lock`, otherwise npm — then runs the strongest checks the project already has, cheapest and non-mutating first, stopping at the first failure:
+`init-project.sh` writes `.claude/verify.sh` from the stack it finds:
+
+| Detected | What the generated script runs |
+|---|---|
+| `package.json` | Your real scripts, through the package manager from your lockfile. A pnpm monorepo falls back to `pnpm -r --if-present run` over lint, typecheck, test and build. |
+| Python | `ruff check`, `mypy`, `pytest` — whichever are installed. |
+| `go.mod` | `go vet ./...`, `go test ./...` |
+| `Cargo.toml` | `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test` |
+| none of those | A stub that exits 3 and asks you to customize it, rather than pretending to verify. |
+
+For a Node project it runs the strongest checks you already have, cheapest and non-mutating first, stopping at the first failure:
 
 ```text
 fmt:check       formatting
@@ -201,7 +212,35 @@ build           last, most expensive
 
 Every one of those is skipped when `package.json` has no such script. Nothing is invented and nothing is guessed. A project with only `lint` and `test` runs exactly those two.
 
-For a non-Node project, `verify.sh` exits and asks you to customize it. That is deliberate. Silently verifying nothing is worse than saying it cannot.
+When nothing can be detected, the stub fails loudly instead of passing. That is deliberate. Silently verifying nothing is worse than saying it cannot.
+
+---
+
+## Starting a new project
+
+`init-project.sh` analyzes a repository and gates on verifying it, so it needs something to analyze. On an empty directory it degrades honestly rather than pretending:
+
+1. Graft builds a near-empty graph, and the semantic analysis has almost nothing to describe.
+2. No stack is detected, so `verify.sh` is the stub that exits 3.
+3. Verification fails, so **neither marker is written** — the Stop gate and the living baseline both stay off.
+4. The initializer exits non-zero, telling you exactly that.
+
+That is the design working. A repository where verification cannot pass never gets a gate that would fail on every task.
+
+**You do not need any of that to start.** The standard, the language rules, the review skill and the reviewer agent are global: `install.sh` puts them in `~/.claude` and they apply to every session in every directory, initialized or not. A brand-new project already gets the engineering standard from the first prompt.
+
+The sequence that works:
+
+```bash
+./install.sh                              # once, ever
+# ... scaffold the project: package.json, scripts, one passing test ...
+git init && git add -A && git commit -m "initial"
+~/.claude/harness-tools/init-project.sh   # now there is something to analyze
+```
+
+Run it once the project has a `test` or `lint` script that passes and enough code to describe. Before that point the project layer has nothing to say, and the global layer is already covering you.
+
+If you want the project files in place early anyway, `--skip-verify` configures everything and leaves the gates off by design. Rerun without it once the project can verify itself.
 
 ---
 
