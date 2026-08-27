@@ -2,10 +2,9 @@
 set -euo pipefail
 CLAUDE_DIR="${HOME}/.claude"
 IMPORT_LINE='@~/.claude/harness/engineering.md'
-rm -f "$CLAUDE_DIR/rules/harness-typescript.md" \
-      "$CLAUDE_DIR/rules/harness-react.md" \
-      "$CLAUDE_DIR/rules/harness-tests.md" \
-      "$CLAUDE_DIR/rules/harness-sql.md" \
+# Globbed rather than listed: a hardcoded list silently orphans every rule added later.
+# The `harness-` prefix under rules/ is owned by this harness.
+rm -f "$CLAUDE_DIR"/rules/harness-*.md \
       "$CLAUDE_DIR/agents/engineering-code-reviewer.md" \
       "$CLAUDE_DIR/hooks/verify-project.sh" \
       "$CLAUDE_DIR/hooks/mark-baseline-dirty.sh"
