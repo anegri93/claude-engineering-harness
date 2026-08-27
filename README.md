@@ -1,16 +1,12 @@
-# Claude Engineering Harness v6
+# Claude Engineering Harness
+
+[English](README.md) · [Español](README.es.md)
 
 A personal Claude Code harness for maintainable, secure, correct, scalable code. It combines a permanent engineering standard, repository-specific semantic rules, Graft repository context, automatic local test infrastructure, deterministic verification, and a living engineering baseline.
 
-## What v6 changes
-
-v6 makes verification environment-aware and keeps Graft current without downgrading newer local builds.
-
-Before lint, tests, or builds are treated as broken, the harness now runs `.claude/preflight.sh`. For a Supabase project this means the initializer and Stop gate can detect a stopped local stack, ensure Docker is available, start Supabase, wait until it is ready, and only then run the project's verification.
-
-The living-baseline behavior from v5 remains unchanged and automatic.
-
 ## Automatic environment preflight
+
+Before lint, tests, or builds are treated as broken, the harness runs `.claude/preflight.sh`. For a Supabase project this means the initializer and the Stop gate can detect a stopped local stack, ensure Docker is available, start Supabase, wait until it is ready, and only then run the project's verification.
 
 Every initialized project gets a generated `.claude/preflight.sh` unless a custom one already exists. The generated script is intentionally conservative.
 
@@ -57,7 +53,7 @@ The harness does not automatically reset or delete local databases when startup 
 
 `.claude/engineering-baseline.md` is a living technical memory.
 
-The new lifecycle is:
+The lifecycle is:
 
 ```text
 Claude edits code
@@ -130,7 +126,7 @@ Enter anywhere inside the repository:
 ~/.claude/harness-tools/init-project.sh
 ```
 
-For a repository already initialized with v5 or earlier, rerun this once after installing v6. This adds the environment preflight and keeps the existing living baseline state refreshed.
+Rerun it after upgrading the harness. It refreshes the generated project files and keeps the existing living baseline state.
 
 The initializer:
 
@@ -151,7 +147,7 @@ The initializer:
 15. Enables `.claude/verify-on-stop` when environment preparation and verification pass.
 16. Enables `.claude/baseline-refresh-on-stop` when semantic analysis and verification pass.
 
-## Living baseline
+## Baseline states
 
 Initial findings receive stable IDs such as:
 
@@ -185,7 +181,7 @@ The generated JSON file is the machine-readable state used to preserve finding i
 
 ## Automatic refresh hooks
 
-v6 keeps the two global living-baseline hooks introduced in v5.
+The harness installs two global living-baseline hooks.
 
 ### PostToolUse
 
@@ -208,7 +204,7 @@ It does not call a model and does not modify the repository.
 
 ### Stop
 
-The existing Stop gate now performs work in this order:
+The Stop gate performs work in this order:
 
 ```text
 1. verify project
@@ -217,7 +213,7 @@ The existing Stop gate now performs work in this order:
 
 Baseline refresh failure is fail-soft. It does not turn a successful code change into a failed task. The dirty state is retained so a later Stop can retry.
 
-Verification failure remains blocking exactly as before.
+Verification failure is blocking.
 
 ## Incremental baseline analysis
 
@@ -366,7 +362,7 @@ node --test tests/*.test.mjs
 
 A full `init-project.sh` remains the expensive operation because it performs deep repository analysis.
 
-After initialization, v5 performs at most one incremental Opus baseline analysis after a Claude coding task that actually edited relevant files. Multiple edits in the same task are collapsed into one refresh.
+After initialization, the harness performs at most one incremental Opus baseline analysis after a Claude coding task that actually edited relevant files. Multiple edits in the same task are collapsed into one refresh.
 
 Tasks with no relevant edits do not trigger a baseline model call.
 
