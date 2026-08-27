@@ -199,6 +199,11 @@ Written by `init-project.sh`, except where noted.
 | `Cargo.toml` | `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test` |
 | none of those | A stub that exits 3 and asks you to customize it, rather than pretending to verify. |
 
+Independently of the stack, a repository containing a `Dockerfile` also gets linted with hadolint before the stack checks run. Two decisions keep that gate usable rather than annoying:
+
+- **A missing hadolint reports and continues.** An unavailable tool is not a code defect, and failing the build over it is how a gate gets switched off.
+- **It fails at `warning` and above, not at hadolint's default of `info`.** The default fails a perfectly correct Dockerfile over advisory notes. Warnings still catch what matters — a `latest` base image, unpinned apt versions. Override with `HARNESS_HADOLINT_THRESHOLD`.
+
 For a Node project it runs the strongest checks you already have, cheapest and non-mutating first, stopping at the first failure:
 
 ```text

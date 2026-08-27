@@ -811,6 +811,36 @@ echo "No verification strategy could be detected for this repository." >&2
 exit 3
 GENERIC_VERIFY_EOF
 fi
+# Dockerfile lint applies to every stack, so it is spliced in after the preflight line
+# instead of being duplicated into each generated variant. A missing hadolint is an
+# unavailable tool, not a code defect, so it reports and continues.
+DOCKER_LINT_BLOCK="$(cat <<'DOCKER_LINT_EOF'
+
+_dockerfiles="$(find . \( -name node_modules -o -name .git \) -prune -o -type f \( -name 'Dockerfile' -o -name 'Dockerfile.*' -o -name '*.dockerfile' \) -print 2>/dev/null)"
+if [[ -n "$_dockerfiles" ]]; then
+  if command -v hadolint >/dev/null 2>&1; then
+    echo "==> hadolint"
+    # hadolint fails on info-level findings by default, which fails a correct Dockerfile
+    # and trains everyone to disable the gate. Warning and above is the useful signal.
+    _hadolint_threshold="${HARNESS_HADOLINT_THRESHOLD:-warning}"
+    _hadolint_failed=0
+    while IFS= read -r _dockerfile; do
+      [[ -n "$_dockerfile" ]] || continue
+      hadolint --failure-threshold "$_hadolint_threshold" "$_dockerfile" || _hadolint_failed=1
+    done <<< "$_dockerfiles"
+    [[ $_hadolint_failed -eq 0 ]] || exit 1
+  else
+    echo "==> hadolint not installed; Dockerfile lint skipped" >&2
+  fi
+fi
+DOCKER_LINT_EOF
+)"
+
+awk -v block="$DOCKER_LINT_BLOCK" '
+  { print }
+  !inserted && /HARNESS_PREFLIGHT_DONE/ { print block; inserted = 1 }
+' "$VERIFY_FILE" > "$VERIFY_FILE.tmp" && mv "$VERIFY_FILE.tmp" "$VERIFY_FILE"
+
 chmod +x "$VERIFY_FILE"
 echo "Configured .claude/verify.sh from detected project commands."
 

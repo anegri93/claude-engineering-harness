@@ -199,6 +199,11 @@ Los escribe `init-project.sh`, salvo donde se indica.
 | `Cargo.toml` | `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test` |
 | ninguno de esos | Un stub que sale 3 y te pide personalizarlo, en vez de fingir que verifica. |
 
+Aparte del stack, un repositorio que tenga un `Dockerfile` también se lintea con hadolint antes de los chequeos del stack. Dos decisiones mantienen ese control usable en vez de molesto:
+
+- **Si hadolint no está instalado, avisa y sigue.** Una herramienta ausente no es un defecto de código, y fallar el build por eso es exactamente cómo se termina apagando un gate.
+- **Falla en `warning` para arriba, no en el `info` que hadolint usa por defecto.** El default hace fallar un Dockerfile perfectamente correcto por notas advertencias menores. Los warnings igual atrapan lo que importa: imagen base `latest`, paquetes apt sin versión. Se cambia con `HARNESS_HADOLINT_THRESHOLD`.
+
 En un proyecto Node corre los chequeos más fuertes que ya tenés, primero los baratos y no mutantes, deteniéndose en la primera falla:
 
 ```text
