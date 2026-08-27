@@ -108,6 +108,7 @@ SCHEMA_JSON="$(tr -d '\n' < "$SCHEMA_FILE")"
 RESPONSE_FILE="$(mktemp -t harness-baseline-refresh.XXXXXX.json)"
 ERROR_FILE="$(mktemp -t harness-baseline-refresh.XXXXXX.log)"
 OUT_DIR="$(mktemp -d -t harness-baseline-render.XXXXXX)"
+# shellcheck disable=SC2329  # invoked by the EXIT trap below
 cleanup() { rm -f "$RESPONSE_FILE" "$ERROR_FILE"; rm -rf "$OUT_DIR"; }
 trap cleanup EXIT
 

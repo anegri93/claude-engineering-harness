@@ -184,7 +184,7 @@ mkdir -p "$PROJECT_DIR/.claude/rules"
 backup_file() {
   local file="$1"
   [[ -e "$file" ]] || return 0
-  local rel="${file#$PROJECT_DIR/}"
+  local rel="${file#"$PROJECT_DIR"/}"
   mkdir -p "$BACKUP_DIR/$(dirname "$rel")"
   cp -R "$file" "$BACKUP_DIR/$rel"
 }
@@ -732,7 +732,9 @@ if [[ -f package.json ]]; then
     echo '#!/usr/bin/env bash'
     echo 'set -euo pipefail'
     echo
+    # shellcheck disable=SC2016  # emitted verbatim into the generated script
     echo 'cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)"'
+    # shellcheck disable=SC2016  # emitted verbatim into the generated script
     echo 'if [[ "${HARNESS_PREFLIGHT_DONE:-0}" != "1" && -x .claude/preflight.sh ]]; then echo "==> environment preflight"; .claude/preflight.sh; fi'
     echo
     if [[ -n "$PACKAGE_MANAGER" ]]; then

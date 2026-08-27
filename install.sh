@@ -61,7 +61,7 @@ ensure_graft
 backup_if_exists() {
   local path="$1"
   if [[ -e "$path" ]]; then
-    local relative="${path#${CLAUDE_DIR}/}"
+    local relative="${path#"${CLAUDE_DIR}"/}"
     mkdir -p "$BACKUP_DIR/$(dirname "$relative")"
     cp -R "$path" "$BACKUP_DIR/$relative"
   fi

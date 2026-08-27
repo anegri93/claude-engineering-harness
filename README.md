@@ -359,7 +359,7 @@ The scripts that edit `~/.claude/settings.json` are covered by round-trip tests 
 them as real subprocesses against a throwaway `HOME`. They need nothing but Node 20+:
 
 ```bash
-node --test "tests/*.test.mjs"
+node --test tests/*.test.mjs
 ```
 
 ## Cost and latency behavior

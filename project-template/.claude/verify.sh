@@ -20,16 +20,12 @@ if ! command -v node >/dev/null 2>&1; then
 fi
 
 if [[ -f pnpm-lock.yaml ]] && command -v pnpm >/dev/null 2>&1; then
-  PM=(pnpm)
   RUN=(pnpm run)
 elif [[ -f yarn.lock ]] && command -v yarn >/dev/null 2>&1; then
-  PM=(yarn)
   RUN=(yarn)
 elif [[ -f bun.lockb || -f bun.lock ]] && command -v bun >/dev/null 2>&1; then
-  PM=(bun)
   RUN=(bun run)
 elif command -v npm >/dev/null 2>&1; then
-  PM=(npm)
   RUN=(npm run)
 else
   echo "No supported package manager found." >&2
