@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `init-project.sh` no longer aborts on macOS Bash 3.2 when a repository has none of the conventional top-level source directories (`apps`, `packages`, `src`, `services`, `libs`, `modules`, `docs`). Under `set -u`, Bash 3.2 treats an empty array expansion as an unbound variable, so the fallback description was never reached.
 - Uninstall now restores the `model` and `effortLevel` that were set before the first install instead of deleting them. Previously a user with a custom model silently lost it on install/uninstall.
 - A value the user sets after installing is treated as deliberate and survives uninstall.
 - Uninstall no longer leaves empty `hooks` containers behind, so a settings file it created nothing in round-trips back to its original content.

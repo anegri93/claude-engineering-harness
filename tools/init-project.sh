@@ -324,7 +324,7 @@ join_by() {
 }
 
 STACK_TEXT="$(join_by ', ' "${STACK_ITEMS[@]}")"
-STRUCTURE_TEXT="$(join_by ', ' "${STRUCTURE_ITEMS[@]}")"
+STRUCTURE_TEXT="$(join_by ', ' ${STRUCTURE_ITEMS[@]+"${STRUCTURE_ITEMS[@]}"})"
 [[ -n "$STRUCTURE_TEXT" ]] || STRUCTURE_TEXT="No conventional top-level source directories detected"
 
 DEV_CMD=""
