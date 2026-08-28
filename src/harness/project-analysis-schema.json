@@ -57,7 +57,7 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "filename": { "type": "string" },
+          "filename": { "type": "string", "description": "Bare kebab-case topic slug: no directory, no .md extension, no harness- prefix (the harness adds its own). Name the topic. Do not echo back a rule filename you can see in the repository." },
           "title": { "type": "string" },
           "paths": {
             "type": "array",

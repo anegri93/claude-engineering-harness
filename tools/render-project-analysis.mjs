@@ -226,7 +226,15 @@ const generatedNames = []
 const used = new Set(['project-architecture'])
 for (let i = 0; i < groups.length; i++) {
   const group = groups[i]
+  // The `harness-` prefix is added below, and it is the harness's ownership marker — never
+  // part of the topic. Strip any the model supplied: it reads the repository, so on a re-run
+  // it sees last run's `harness-<topic>.md` and echoes that name back. Prefixing again turned
+  // every re-initialization into `harness-harness-<topic>`, then `harness-harness-harness-`,
+  // growing by one each time. Stripping here makes the filename idempotent whatever it returns.
   let slug = safeSlug(group?.filename || group?.title, `project-rule-${i + 1}`)
+    .replace(/^(?:harness-)+/, '')
+    .replace(/^harness$/, '')
+  if (!slug) slug = `project-rule-${i + 1}`
   if (slug === 'project-architecture') slug = 'architecture-details'
   let finalSlug = slug
   let suffix = 2

@@ -316,3 +316,68 @@ test('a refresh that changes nothing reports no change', t => {
   const { result } = renderRefresh(dir, current, { finding_reviews: [], new_findings: [] })
   assert.equal(result.changed, false)
 })
+
+// project-architecture.md is always written; these cases are about the generated rule names.
+function harnessRules(r) {
+  return r.rules().filter(n => n.startsWith('harness-'))
+}
+
+// The analysis reads the repository, so on a re-initialization the model sees last run's
+// `harness-<topic>.md` and echoes that name back as the filename. Prefixing it again turned
+// every rerun into `harness-harness-<topic>`, then `harness-harness-harness-<topic>` — one
+// more prefix per run, observed live on a real project. The prefix is the harness's ownership
+// marker and is added by the renderer; it is never part of the topic the model names.
+test('a filename the model already prefixed does not get prefixed again', t => {
+  const dir = workspace(t)
+  const r = renderAnalysis(dir, {
+    ...MINIMAL_ANALYSIS,
+    rule_groups: [{
+      title: 'Data layer',
+      filename: 'harness-data-layer',
+      paths: ['src/**'],
+      rules: ['Keep queries parameterized.']
+    }]
+  })
+  assert.deepEqual(harnessRules(r), ['harness-data-layer.md'])
+})
+
+test('repeated prefixes from earlier runs are all stripped', t => {
+  const dir = workspace(t)
+  const r = renderAnalysis(dir, {
+    ...MINIMAL_ANALYSIS,
+    rule_groups: [{
+      title: 'Testing',
+      filename: 'harness-harness-harness-testing.md',
+      paths: ['tests/**'],
+      rules: ['Test behaviour, not shape.']
+    }]
+  })
+  assert.deepEqual(harnessRules(r), ['harness-testing.md'])
+})
+
+test('rendering is idempotent: the same group renders to the same filename every run', t => {
+  const group = {
+    title: 'Auth and modes',
+    filename: 'auth-y-modos',
+    paths: ['src/auth/**'],
+    rules: ['Authentication is not authorization.']
+  }
+  const first = renderAnalysis(workspace(t), { ...MINIMAL_ANALYSIS, rule_groups: [group] })
+  assert.deepEqual(harnessRules(first), ['harness-auth-y-modos.md'])
+
+  // What the model returns on the next run, having read the file the first run wrote.
+  const second = renderAnalysis(workspace(t), {
+    ...MINIMAL_ANALYSIS,
+    rule_groups: [{ ...group, filename: harnessRules(first)[0] }]
+  })
+  assert.deepEqual(harnessRules(second), harnessRules(first), 'a rerun renamed the rule instead of replacing it')
+})
+
+test('a filename that is nothing but the prefix falls back instead of vanishing', t => {
+  const dir = workspace(t)
+  const r = renderAnalysis(dir, {
+    ...MINIMAL_ANALYSIS,
+    rule_groups: [{ title: '', filename: 'harness-', paths: ['src/**'], rules: ['Something.'] }]
+  })
+  assert.deepEqual(harnessRules(r), ['harness-project-rule-1.md'])
+})
