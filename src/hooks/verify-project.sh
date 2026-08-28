@@ -21,6 +21,16 @@ BASELINE_ENABLED=false
 [[ -f .claude/baseline-refresh-on-stop ]] && BASELINE_ENABLED=true
 [[ "$VERIFY_ENABLED" == true || "$BASELINE_ENABLED" == true ]] || exit 0
 
+PROJECT_SLUG="$(printf '%s' "$(basename "$PROJECT_DIR")" | tr -cs 'A-Za-z0-9._-' '_')"
+if command -v shasum >/dev/null 2>&1; then
+  PROJECT_HASH="$(printf '%s' "$PROJECT_DIR" | shasum -a 256 | awk '{print substr($1,1,12)}')"
+elif command -v sha256sum >/dev/null 2>&1; then
+  PROJECT_HASH="$(printf '%s' "$PROJECT_DIR" | sha256sum | awk '{print substr($1,1,12)}')"
+else
+  PROJECT_HASH="nohash"
+fi
+STATE_DIR="${HOME}/.claude/harness-runtime/${PROJECT_SLUG}_${PROJECT_HASH}"
+
 TREE_CHANGED=true
 if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   if git diff --quiet --ignore-submodules -- 2>/dev/null \
@@ -28,6 +38,14 @@ if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/n
     && [[ -z "$(git ls-files --others --exclude-standard 2>/dev/null)" ]]; then
     TREE_CHANGED=false
   fi
+fi
+
+# A clean tree is inconclusive, not proof that nothing happened: a task that edits files
+# and then commits them ends clean, and that is precisely when the change is about to be
+# pushed. The PostToolUse edit record is the harness's own account of what the task
+# touched, so it decides when git cannot.
+if [[ "$TREE_CHANGED" == false && -f "$STATE_DIR/baseline-dirty" ]]; then
+  TREE_CHANGED=true
 fi
 
 run_and_report() {
@@ -80,6 +98,13 @@ if [[ "$BASELINE_ENABLED" == true ]]; then
   if [[ -x "$REFRESH" ]]; then
     "$REFRESH" --project "$PROJECT_DIR" || true
   fi
+fi
+
+# The edit record has two consumers. The baseline refresh clears it when it runs; when the
+# refresh is not enabled, Stop verification is the last consumer and clears it here, so a
+# later session that changed nothing keeps the no-op fast path.
+if [[ "$BASELINE_ENABLED" != true ]]; then
+  rm -f "$STATE_DIR/baseline-dirty" "$STATE_DIR/changed-files.txt" 2>/dev/null || true
 fi
 
 exit 0
