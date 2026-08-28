@@ -57,8 +57,21 @@ function mdInline(value) {
   return text(value).replaceAll('`', '\\`').replace(/\s+/g, ' ')
 }
 
+// Rule bodies are model-authored text derived from the analyzed repository, and they are
+// written into files Claude Code loads as instructions in every future session. Paths,
+// globs and filenames are sanitized separately; this neutralizes the two constructs in a
+// body that would be acted on rather than read — a leading `@`, which Claude Code resolves
+// as a file import, and markdown link/image targets.
+function safeRuleText(value) {
+  return text(value)
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .split('\n')
+    .map((line) => line.replace(/^(\s*)@/, '$1'))
+    .join('\n')
+}
+
 function bullet(value) {
-  return `- ${text(value).replace(/\s+/g, ' ')}`
+  return `- ${safeRuleText(value).replace(/\s+/g, ' ')}`
 }
 
 function pathCode(value) {
@@ -97,8 +110,8 @@ if (!analysis || typeof analysis !== 'object') {
   throw new Error('Claude response does not contain structured_output')
 }
 
-const summary = text(analysis.summary)
-const architectureSummary = text(analysis.architecture_summary)
+const summary = safeRuleText(analysis.summary)
+const architectureSummary = safeRuleText(analysis.architecture_summary)
 if (!summary || !architectureSummary) {
   throw new Error('Claude analysis is missing summary or architecture_summary')
 }
@@ -142,7 +155,7 @@ if (modules.length) {
     const p = safeRepoPath(item?.path)
     const responsibility = text(item?.responsibility)
     if (!p || !responsibility) continue
-    managed.push(`- ${pathCode(p)}: ${responsibility.replace(/\s+/g, ' ')}`)
+    managed.push(`- ${pathCode(p)}: ${safeRuleText(responsibility).replace(/\s+/g, ' ')}`)
   }
   managed.push('')
 }
@@ -195,7 +208,7 @@ if (modules.length) {
     const deps = list(item?.depends_on, 8).map(safeRepoPath).filter(Boolean)
     architecture.push(`### ${pathCode(p)}`)
     architecture.push('')
-    architecture.push(responsibility)
+    architecture.push(safeRuleText(responsibility))
     if (deps.length) architecture.push(`- Depends on: ${deps.map(pathCode).join(', ')}`)
     architecture.push(`- Evidence: ${evidence(item?.evidence_paths)}`)
     architecture.push('')
@@ -228,9 +241,9 @@ for (let i = 0; i < groups.length; i++) {
   doc.push(yamlFrontmatter(group?.paths).trimEnd())
   if (doc[0] === '') doc.shift()
   doc.push('<!-- generated-by: claude-engineering-harness -->')
-  doc.push(`# ${text(group?.title) || finalSlug}`)
+  doc.push(`# ${safeRuleText(group?.title).replace(/\s+/g, ' ') || finalSlug}`)
   doc.push('')
-  const rationale = text(group?.rationale)
+  const rationale = safeRuleText(group?.rationale)
   if (rationale) {
     doc.push(rationale)
     doc.push('')
@@ -267,6 +280,7 @@ const baselineState = {
     recommendation: text(risk?.recommendation),
     resolution: '',
   })),
+  next_finding_id: risks.length + 1,
   full_reanalysis_recommended: false,
   full_reanalysis_reason: '',
 }

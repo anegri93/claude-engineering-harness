@@ -630,11 +630,13 @@ if [[ "$AI_STATUS" == "passed" ]]; then
   [[ -f "$ARCH_FILE" ]] && backup_file "$ARCH_FILE"
   cp "$STAGE_DIR/rules/project-architecture.md" "$ARCH_FILE"
 
+  GENERATED_RULE_NAMES=()
   for generated_rule in "$STAGE_DIR"/rules/harness-*.md; do
     [[ -e "$generated_rule" ]] || continue
     destination="$PROJECT_DIR/.claude/rules/$(basename "$generated_rule")"
     [[ -f "$destination" ]] && backup_file "$destination"
     cp "$generated_rule" "$destination"
+    GENERATED_RULE_NAMES+=("$(basename "$generated_rule")")
   done
 
   BASELINE_FILE="$PROJECT_DIR/.claude/engineering-baseline.md"
@@ -644,7 +646,14 @@ if [[ "$AI_STATUS" == "passed" ]]; then
   cp "$STAGE_DIR/engineering-baseline.md" "$BASELINE_FILE"
   cp "$STAGE_DIR/engineering-baseline.json" "$BASELINE_STATE_FILE"
 
-  echo "Configured semantic project rules under .claude/rules/."
+  # These files are generated from repository content and Claude Code loads them as
+  # instructions in every future session, so name them instead of only counting them.
+  echo "Configured semantic project rules under .claude/rules/:"
+  echo "  project-architecture.md"
+  for rule_name in ${GENERATED_RULE_NAMES[@]+"${GENERATED_RULE_NAMES[@]}"}; do
+    echo "  $rule_name"
+  done
+  echo "These rules load as instructions in every future session. Read them once before your first task."
   echo "Created living .claude/engineering-baseline.md + .json state."
 else
   GENERIC_MANAGED="$STAGE_DIR/CLAUDE.managed.md"

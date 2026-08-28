@@ -26,6 +26,29 @@ function evidence(paths) {
 }
 function bullet(v) { return `- ${text(v).replace(/\s+/g,' ')}` }
 
+// Compare titles on their words, so a reworded finding that differs only in punctuation or
+// casing is recognized as the one already recorded rather than appended beside it.
+function titleKey(v) { return text(v).toLowerCase().replace(/[^a-z0-9]+/g,' ').trim() }
+
+// The baseline is loaded as context for every future task, so unbounded growth degrades the
+// thing it exists to improve. Retain the highest-severity findings and drop the tail,
+// oldest-first within a severity so the visible set stays stable between refreshes.
+const MAX_ACTIVE_FINDINGS = 20
+const MAX_ARCHIVED_FINDINGS = 15
+const SEVERITY_RANK = { critical: 0, high: 1, medium: 2, low: 3 }
+const severityRank = f => SEVERITY_RANK[text(f.severity)] ?? 9
+const isArchived = f => ['resolved','stale'].includes(text(f.status))
+
+function capFindings(findings, max) {
+  if (findings.length <= max) return { kept: findings, dropped: 0 }
+  const keep = new Set(findings
+    .map((f, index) => ({ f, index }))
+    .sort((a, b) => severityRank(a.f) - severityRank(b.f) || a.index - b.index)
+    .slice(0, max)
+    .map(x => x.index))
+  return { kept: findings.filter((_, i) => keep.has(i)), dropped: findings.length - max }
+}
+
 const args=parseArgs(process.argv)
 const currentPath=req(args,'current')
 const responsePath=req(args,'response')
@@ -65,14 +88,18 @@ for(const review of Array.isArray(refresh.finding_reviews) ? refresh.finding_rev
   }
 }
 
-let maxId=current.findings.reduce((m,f)=>Math.max(m, Number(/^F(\d+)$/.exec(text(f.id))?.[1]||0)),0)
-const normalizedTitles=new Set(current.findings.map(f=>text(f.title).toLowerCase()).filter(Boolean))
+// Findings keep stable F### identity. A finding dropped by the retention cap must never
+// hand its number to a different finding later, so allocation runs off a persisted counter
+// rather than off the current maximum.
+const maxExistingId=current.findings.reduce((m,f)=>Math.max(m, Number(/^F(\d+)$/.exec(text(f.id))?.[1]||0)),0)
+let nextId=Math.max(Number(current.next_finding_id)||0, maxExistingId+1)
+const titleKeys=new Set(current.findings.map(f=>titleKey(f.title)).filter(Boolean))
 for(const nf of Array.isArray(refresh.new_findings) ? refresh.new_findings : []) {
   const title=text(nf?.title)
-  if(!title || normalizedTitles.has(title.toLowerCase())) continue
-  maxId++
+  const key=titleKey(title)
+  if(!title || titleKeys.has(key)) continue
   const finding={
-    id:`F${String(maxId).padStart(3,'0')}`,
+    id:`F${String(nextId).padStart(3,'0')}`,
     status:'new',
     severity:text(nf?.severity)||'low',
     title,
@@ -82,9 +109,11 @@ for(const nf of Array.isArray(refresh.new_findings) ? refresh.new_findings : [])
     resolution:'',
   }
   current.findings.push(finding)
-  normalizedTitles.add(title.toLowerCase())
+  titleKeys.add(key)
+  nextId++
   added++
 }
+current.next_finding_id=nextId
 
 if (Boolean(refresh.full_reanalysis_recommended)) {
   current.full_reanalysis_recommended = true
@@ -92,6 +121,14 @@ if (Boolean(refresh.full_reanalysis_recommended)) {
 } else {
   current.full_reanalysis_recommended = Boolean(current.full_reanalysis_recommended)
   current.full_reanalysis_reason = text(current.full_reanalysis_reason)
+}
+
+const activeCap=capFindings(current.findings.filter(f=>!isArchived(f)), MAX_ACTIVE_FINDINGS)
+const archivedCap=capFindings(current.findings.filter(isArchived), MAX_ARCHIVED_FINDINGS)
+const pruned=activeCap.dropped+archivedCap.dropped
+if(pruned) {
+  const retained=new Set([...activeCap.kept, ...archivedCap.kept])
+  current.findings=current.findings.filter(f=>retained.has(f))
 }
 
 function semanticState(x) {
@@ -155,4 +192,4 @@ lines.push('A full architecture/rule regeneration still comes from `~/.claude/ha
 
 fs.writeFileSync(path.join(outDir,'engineering-baseline.md'),lines.join('\n'))
 fs.writeFileSync(path.join(outDir,'engineering-baseline.json'),JSON.stringify(current,null,2)+'\n')
-console.log(JSON.stringify({changed:hasChanged,updated,resolved,changed_findings:changedCount,stale,added,full_reanalysis_recommended:current.full_reanalysis_recommended,summary:text(refresh.summary)}))
+console.log(JSON.stringify({changed:hasChanged,updated,resolved,changed_findings:changedCount,stale,added,pruned,full_reanalysis_recommended:current.full_reanalysis_recommended,summary:text(refresh.summary)}))

@@ -166,7 +166,10 @@ if [[ "$HAS_CHANGED" == "true" ]]; then
   RESOLVED="$(node -e 'const x=JSON.parse(process.argv[1]);process.stdout.write(String(x.resolved||0))' "$RENDER_RESULT")"
   ADDED="$(node -e 'const x=JSON.parse(process.argv[1]);process.stdout.write(String(x.added||0))' "$RENDER_RESULT")"
   CHANGED_COUNT="$(node -e 'const x=JSON.parse(process.argv[1]);process.stdout.write(String(x.changed_findings||0))' "$RENDER_RESULT")"
+  PRUNED="$(node -e 'const x=JSON.parse(process.argv[1]);process.stdout.write(String(x.pruned||0))' "$RENDER_RESULT")"
   echo "Engineering baseline refreshed: ${UPDATED} updated, ${RESOLVED} resolved, ${CHANGED_COUNT} changed, ${ADDED} new."
+  # Retention is not silent: dropping a finding is a decision the reader should see.
+  [[ "$PRUNED" == "0" ]] || echo "Retention cap dropped ${PRUNED} lowest-severity finding(s) from the baseline."
 else
   echo "Engineering baseline checked: no finding changes in this task's blast radius."
 fi
