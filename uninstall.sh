@@ -26,13 +26,25 @@ else
   SETTINGS_RESTORED=true
 fi
 
-# Globbed rather than listed: a hardcoded list silently orphans every rule added later.
-# The `harness-` prefix under rules/ is owned by this harness.
+# Globbed rather than listed: a hardcoded list silently orphans every file added later.
+# `harness-` under rules/, agents/ and skills/ is this harness's namespace inside directories
+# the user also owns, so removing the namespace removes exactly what was installed. The two
+# unprefixed names are what the harness shipped before the namespace existed, and are removed
+# so uninstalling after an upgrade does not leave them behind.
 rm -f "$CLAUDE_DIR"/rules/harness-*.md \
-      "$CLAUDE_DIR/agents/engineering-code-reviewer.md" \
-      "$CLAUDE_DIR/hooks/verify-project.sh" \
-      "$CLAUDE_DIR/hooks/mark-baseline-dirty.sh"
-rm -rf "$CLAUDE_DIR/skills/engineering-review" "$CLAUDE_DIR/harness" "$CLAUDE_DIR/harness-tools" "$CLAUDE_DIR/harness-runtime"
+      "$CLAUDE_DIR"/agents/harness-*.md \
+      "$CLAUDE_DIR/agents/engineering-code-reviewer.md"
+rm -rf "$CLAUDE_DIR"/skills/harness-* "$CLAUDE_DIR/skills/engineering-review"
+
+# hooks/ is not namespaced, so it is derived from the repository this script ships in: the
+# same tree install.sh copied from. Removing a hook by a list here would orphan every hook
+# added later, which is the failure this whole change exists to close.
+for hook in "$SCRIPT_DIR"/src/hooks/*.sh; do
+  [[ -f "$hook" ]] || continue
+  rm -f "$CLAUDE_DIR/hooks/$(basename "$hook")"
+done
+
+rm -rf "$CLAUDE_DIR/harness" "$CLAUDE_DIR/harness-tools" "$CLAUDE_DIR/harness-runtime"
 if [[ -f "$CLAUDE_DIR/CLAUDE.md" ]]; then
   tmp="$(mktemp)"
   awk -v import="$IMPORT_LINE" '

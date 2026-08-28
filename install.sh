@@ -71,30 +71,67 @@ install_file() {
   backup_if_exists "$dst"
   mkdir -p "$(dirname "$dst")"
   cp "$src" "$dst"
+  # Derive the executable bit from the source rather than a second list of which files are
+  # scripts, which is one more thing that goes stale when a file is added.
+  if [[ -x "$src" ]]; then
+    chmod +x "$dst"
+  fi
 }
 
-install_file "$SOURCE_DIR/src/harness/engineering.md" "$CLAUDE_DIR/harness/engineering.md"
-install_file "$SOURCE_DIR/src/harness/project-analysis-prompt.md" "$CLAUDE_DIR/harness/project-analysis-prompt.md"
-install_file "$SOURCE_DIR/src/harness/project-analysis-schema.json" "$CLAUDE_DIR/harness/project-analysis-schema.json"
-install_file "$SOURCE_DIR/src/harness/baseline-refresh-prompt.md" "$CLAUDE_DIR/harness/baseline-refresh-prompt.md"
-install_file "$SOURCE_DIR/src/harness/baseline-refresh-schema.json" "$CLAUDE_DIR/harness/baseline-refresh-schema.json"
+# Every payload directory is walked rather than listed. A hardcoded list fails silently in
+# the passing direction: a file added to src/ is committed, reviewed and documented, and
+# simply never reaches the user, with no error anywhere. tests/payload.test.mjs proves a
+# newly added file in each of these directories installs and uninstalls.
+
+# `harness-` under rules/, agents/ and skills/ is this harness's namespace inside a directory
+# the user also owns, so it can be pruned before reinstalling. Without the prune, a rule that
+# is renamed or dropped upstream keeps loading into every session forever. Nothing outside
+# the namespace is touched. The two unprefixed names are what the harness shipped before the
+# namespace existed; they are removed so an upgrade does not leave a second, stale reviewer.
+rm -f "$CLAUDE_DIR"/rules/harness-*.md \
+      "$CLAUDE_DIR"/agents/harness-*.md \
+      "$CLAUDE_DIR/agents/engineering-code-reviewer.md"
+rm -rf "$CLAUDE_DIR"/skills/harness-* "$CLAUDE_DIR/skills/engineering-review"
+
+for harness_file in "$SOURCE_DIR"/src/harness/*; do
+  [[ -f "$harness_file" ]] || continue
+  install_file "$harness_file" "$CLAUDE_DIR/harness/$(basename "$harness_file")"
+done
 
 for rule in "$SOURCE_DIR"/src/rules/*.md; do
+  [[ -f "$rule" ]] || continue
   install_file "$rule" "$CLAUDE_DIR/rules/$(basename "$rule")"
 done
-install_file "$SOURCE_DIR/src/skills/engineering-review/SKILL.md" "$CLAUDE_DIR/skills/engineering-review/SKILL.md"
-install_file "$SOURCE_DIR/src/agents/engineering-code-reviewer.md" "$CLAUDE_DIR/agents/engineering-code-reviewer.md"
-install_file "$SOURCE_DIR/src/hooks/verify-project.sh" "$CLAUDE_DIR/hooks/verify-project.sh"
-install_file "$SOURCE_DIR/src/hooks/mark-baseline-dirty.sh" "$CLAUDE_DIR/hooks/mark-baseline-dirty.sh"
-chmod +x "$CLAUDE_DIR/hooks/verify-project.sh" "$CLAUDE_DIR/hooks/mark-baseline-dirty.sh"
+
+for agent in "$SOURCE_DIR"/src/agents/*.md; do
+  [[ -f "$agent" ]] || continue
+  install_file "$agent" "$CLAUDE_DIR/agents/$(basename "$agent")"
+done
+
+# A skill is a directory: SKILL.md plus whatever references it ships.
+for skill in "$SOURCE_DIR"/src/skills/*/; do
+  [[ -d "$skill" ]] || continue
+  skill_name="$(basename "$skill")"
+  backup_if_exists "$CLAUDE_DIR/skills/$skill_name"
+  mkdir -p "$CLAUDE_DIR/skills/$skill_name"
+  cp -R "$skill." "$CLAUDE_DIR/skills/$skill_name/"
+done
+
+for hook in "$SOURCE_DIR"/src/hooks/*.sh; do
+  [[ -f "$hook" ]] || continue
+  install_file "$hook" "$CLAUDE_DIR/hooks/$(basename "$hook")"
+done
 
 mkdir -p "$CLAUDE_DIR/harness/project-template"
 cp -R "$SOURCE_DIR/project-template/." "$CLAUDE_DIR/harness/project-template/"
+
+# harness-tools/ is removed wholesale by uninstall, so everything under tools/ can be shipped
+# without a per-file removal obligation.
 mkdir -p "$CLAUDE_DIR/harness-tools"
-for tool in init-project.sh refresh-baseline.sh render-project-analysis.mjs render-baseline-refresh.mjs remove-settings-hook.mjs settings-io.mjs; do
-  install_file "$SOURCE_DIR/tools/$tool" "$CLAUDE_DIR/harness-tools/$tool"
+for tool in "$SOURCE_DIR"/tools/*; do
+  [[ -f "$tool" ]] || continue
+  install_file "$tool" "$CLAUDE_DIR/harness-tools/$(basename "$tool")"
 done
-chmod +x "$CLAUDE_DIR/harness-tools/init-project.sh" "$CLAUDE_DIR/harness-tools/refresh-baseline.sh" "$CLAUDE_DIR/harness-tools/render-project-analysis.mjs" "$CLAUDE_DIR/harness-tools/render-baseline-refresh.mjs"
 
 GLOBAL_CLAUDE="$CLAUDE_DIR/CLAUDE.md"
 IMPORT_LINE='@~/.claude/harness/engineering.md'

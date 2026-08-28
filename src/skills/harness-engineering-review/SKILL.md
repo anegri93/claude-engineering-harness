@@ -1,4 +1,5 @@
 ---
+name: harness-engineering-review
 description: Performs a production-readiness review of code changes for correctness, security, maintainability, scalability, and test quality. Use after significant implementations, refactors, bug fixes, or when asked to review a diff or code quality.
 effort: high
 ---

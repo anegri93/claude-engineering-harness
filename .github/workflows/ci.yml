@@ -5,12 +5,21 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
+  # macOS is not decoration. The shipped scripts run under whatever /bin/bash the user has,
+  # and on macOS that is still Bash 3.2 with a BSD userland — different empty-array semantics
+  # under `set -u`, different awk, different sed. Two shipped regressions were macOS-only and
+  # one of them passed `bash -n` on the machine that wrote it. A platform that is not executed
+  # is not supported, so the full suite runs on both.
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, macos-latest]
         node: ['20', '22', '24']
     steps:
       - uses: actions/checkout@v5
@@ -20,6 +29,24 @@ jobs:
       # The shell expands the glob so the command works on every supported Node version.
       - run: node --test tests/*.test.mjs
 
+  # The oldest bash the harness claims to support, running the payload rather than parsing it.
+  # `bash -n` is deliberately not the check here: both known macOS regressions parsed cleanly
+  # and failed at runtime.
+  bash32:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - name: Confirm /bin/bash is 3.2
+        run: |
+          /bin/bash --version | head -1
+          /bin/bash -c '[[ ${BASH_VERSINFO[0]} -eq 3 ]] || { echo "expected Bash 3.2 at /bin/bash" >&2; exit 1; }'
+      # PATH is pinned so every `bash` the tests spawn resolves to 3.2 rather than the
+      # runner's preinstalled newer bash.
+      - run: PATH="/bin:$PATH" node --test tests/*.test.mjs
+
   shellcheck:
     runs-on: ubuntu-latest
     steps:
@@ -27,6 +54,10 @@ jobs:
       # Pinned rather than using the runner's preinstalled shellcheck: the two versions
       # disagree on which code an unreachable command gets, so an unpinned job fails on
       # findings that are clean locally.
+      #
+      # The file set is derived from the index rather than listed, so a shell script added
+      # under a new directory is linted instead of silently skipped.
       - run: |
-          docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:v0.11.0 \
-            install.sh uninstall.sh src/hooks/*.sh tools/*.sh project-template/.claude/*.sh
+          mapfile -t scripts < <(git ls-files '*.sh')
+          printf 'linting %d script(s)\n' "${#scripts[@]}"
+          docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:v0.11.0 "${scripts[@]}"

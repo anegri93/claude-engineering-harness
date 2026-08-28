@@ -130,7 +130,9 @@ claude --safe-mode -p "$PROMPT" \
   --json-schema "$SCHEMA_JSON" \
   >"$RESPONSE_FILE" 2>"$ERROR_FILE"
 CLAUDE_EXIT=$?
-set -e 2>/dev/null || true
+# Not `set -e`: this script deliberately runs without errexit (line 2) so every failure
+# below stays fail-soft — the marker is kept and the next Stop retries. Re-enabling it
+# here would make an unrelated later failure abort mid-write.
 
 if [[ $CLAUDE_EXIT -ne 0 ]]; then
   echo "Engineering baseline refresh deferred: Claude analysis failed. The baseline remains marked dirty for the next Stop." >&2
@@ -141,7 +143,9 @@ fi
 set +e
 RENDER_RESULT="$(node "$RENDERER" --current "$BASELINE_JSON" --response "$RESPONSE_FILE" --out "$OUT_DIR" 2>"$ERROR_FILE")"
 RENDER_EXIT=$?
-set -e 2>/dev/null || true
+# Not `set -e`: this script deliberately runs without errexit (line 2) so every failure
+# below stays fail-soft — the marker is kept and the next Stop retries. Re-enabling it
+# here would make an unrelated later failure abort mid-write.
 if [[ $RENDER_EXIT -ne 0 ]]; then
   echo "Engineering baseline refresh deferred: could not render the incremental analysis." >&2
   tail -n 20 "$ERROR_FILE" >&2 || true

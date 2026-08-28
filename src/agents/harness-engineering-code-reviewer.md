@@ -1,5 +1,5 @@
 ---
-name: engineering-code-reviewer
+name: harness-engineering-code-reviewer
 description: Reviews completed code changes for production readiness. Use proactively after significant code changes or when a second independent review would improve confidence.
 tools: Read, Grep, Glob, Bash
 permissionMode: plan

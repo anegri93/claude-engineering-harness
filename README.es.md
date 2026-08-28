@@ -181,8 +181,8 @@ Los escribe `init-project.sh`, salvo donde se indica.
 | `harness/baseline-refresh-prompt.md` + `.json` | El mismo par para el refresh incremental. |
 | `harness/project-template/` | Los esqueletos de `CLAUDE.md`, `verify.sh`, `preflight.sh` y la regla de arquitectura que `init-project.sh` copia y completa. |
 | `rules/harness-*.md` | Reglas que se cargan automáticamente para las rutas que coinciden, en cualquier proyecto: `typescript`, `react`, `tests`, `sql`, `http-api`, `jobs`, `config`, `shell`, `docker`, `ci`. Cada una declara sus propios globs, así nada se carga donde no aplica. |
-| `skills/engineering-review/SKILL.md` | La skill de review: una pasada de production-readiness sobre corrección, seguridad, mantenibilidad, escalabilidad y calidad de tests. |
-| `agents/engineering-code-reviewer.md` | Un agente revisor de solo lectura que no puede editar, para una segunda opinión independiente sobre un cambio terminado. |
+| `skills/harness-engineering-review/SKILL.md` | La skill de review: una pasada de production-readiness sobre corrección, seguridad, mantenibilidad, escalabilidad y calidad de tests. |
+| `agents/harness-engineering-code-reviewer.md` | Un agente revisor de solo lectura que no puede editar, para una segunda opinión independiente sobre un cambio terminado. |
 | `hooks/mark-baseline-dirty.sh` | El hook PostToolUse. Registra archivos editados, no llama a ningún modelo. |
 | `hooks/verify-project.sh` | El hook de Stop. Corre preflight, verificación, y después refresh. |
 | `harness-tools/` | `init-project.sh` y `refresh-baseline.sh`, más los renderers que convierten la salida estructurada del modelo en Markdown, y los helpers de settings que usan install y uninstall. |
