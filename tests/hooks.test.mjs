@@ -7,6 +7,7 @@
 // deliberately duplicated ignore list. This is that assertion.
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -114,7 +115,22 @@ function sandbox(t) {
   git(['add', '-A'])
   git(['-c', 'commit.gpgsign=false', 'commit', '--quiet', '-m', 'seed'])
 
-  return { home, project, git }
+  return { home, project, git, state: stateDirFor(home, project) }
+}
+
+// Consent to run a repository's scripts is recorded on the user's side of the line, never in
+// the repository, so the tests enable the gates where init-project.sh would. Deriving the path
+// the same way the hooks do is what keeps this honest.
+function stateDirFor(home, project) {
+  const real = fs.realpathSync(project)
+  const slug = path.basename(real).replace(/[^A-Za-z0-9._-]+/g, '_')
+  const hash = crypto.createHash('sha256').update(real).digest('hex').slice(0, 12)
+  return path.join(home, '.claude', 'harness-runtime', `${slug}_${hash}`)
+}
+
+function grant(box, marker) {
+  fs.mkdirSync(box.state, { recursive: true })
+  fs.writeFileSync(path.join(box.state, marker), '')
 }
 
 function runHook(hook, { home, project }, payload) {
@@ -128,30 +144,31 @@ function runHook(hook, { home, project }, payload) {
 
 // The hook derives its state directory from HOME and the project path, so the test asks the
 // hook itself rather than reimplementing the slug and hash.
-function stateDir(home) {
-  const runtime = path.join(home, '.claude', 'harness-runtime')
-  if (!fs.existsSync(runtime)) return null
-  const entries = fs.readdirSync(runtime)
-  return entries.length === 1 ? path.join(runtime, entries[0]) : null
+// Null when no edit was recorded. The directory itself may exist because granting consent
+// created it, so its presence is not the signal — the record inside it is.
+function stateDir(home, box) {
+  const dir = box ? box.state : null
+  if (!dir || !fs.existsSync(path.join(dir, 'baseline-dirty'))) return null
+  return dir
 }
 
-function enableVerify(project, script) {
-  fs.writeFileSync(path.join(project, '.claude', 'verify-on-stop'), '')
-  fs.writeFileSync(path.join(project, '.claude', 'verify.sh'), script)
+function enableVerify(box, script) {
+  grant(box, 'verify-on-stop')
+  fs.writeFileSync(path.join(box.project, '.claude', 'verify.sh'), script)
 }
 
 // --- mark-baseline-dirty.sh -------------------------------------------------------------
 
 test('an edit to real source is recorded', t => {
   const box = sandbox(t)
-  fs.writeFileSync(path.join(box.project, '.claude', 'verify-on-stop'), '')
+  grant(box, 'verify-on-stop')
 
   const result = runHook(MARK_HOOK, box, {
     tool_input: { file_path: path.join(box.project, 'src/index.ts') },
   })
 
   assert.equal(result.status, 0, result.stderr)
-  const dir = stateDir(box.home)
+  const dir = stateDir(box.home, box)
   assert.ok(dir, 'no runtime state directory was created')
   assert.equal(fs.existsSync(path.join(dir, 'baseline-dirty')), true)
   assert.equal(fs.readFileSync(path.join(dir, 'changed-files.txt'), 'utf8'), 'src/index.ts\n')
@@ -159,14 +176,14 @@ test('an edit to real source is recorded', t => {
 
 test('an edit to a harness-generated file is not recorded', t => {
   const box = sandbox(t)
-  fs.writeFileSync(path.join(box.project, '.claude', 'verify-on-stop'), '')
+  grant(box, 'verify-on-stop')
 
   const result = runHook(MARK_HOOK, box, {
     tool_input: { file_path: path.join(box.project, '.claude/engineering-baseline.md') },
   })
 
   assert.equal(result.status, 0, result.stderr)
-  assert.equal(stateDir(box.home), null, 'harness bookkeeping was recorded as an engineering change')
+  assert.equal(stateDir(box.home, box), null, 'harness bookkeeping was recorded as an engineering change')
 })
 
 test('nothing is recorded when neither gate is enabled', t => {
@@ -177,14 +194,14 @@ test('nothing is recorded when neither gate is enabled', t => {
   })
 
   assert.equal(result.status, 0, result.stderr)
-  assert.equal(stateDir(box.home), null, 'state was written for a project that opted into nothing')
+  assert.equal(stateDir(box.home, box), null, 'state was written for a project that opted into nothing')
 })
 
 test('the record is written for Stop verification alone, with no baseline in the project', t => {
   const box = sandbox(t)
   // The record has two consumers. Tying it to the baseline would leave the verification gate
   // blind in every project that enabled verification without the living baseline.
-  fs.writeFileSync(path.join(box.project, '.claude', 'verify-on-stop'), '')
+  grant(box, 'verify-on-stop')
   assert.equal(fs.existsSync(path.join(box.project, '.claude', 'engineering-baseline.json')), false)
 
   const result = runHook(MARK_HOOK, box, {
@@ -192,26 +209,26 @@ test('the record is written for Stop verification alone, with no baseline in the
   })
 
   assert.equal(result.status, 0, result.stderr)
-  assert.ok(stateDir(box.home), 'the verification gate would never learn this task edited anything')
+  assert.ok(stateDir(box.home, box), 'the verification gate would never learn this task edited anything')
 })
 
 test('an edit outside the project is discarded', t => {
   const box = sandbox(t)
-  fs.writeFileSync(path.join(box.project, '.claude', 'verify-on-stop'), '')
+  grant(box, 'verify-on-stop')
 
   const result = runHook(MARK_HOOK, box, {
     tool_input: { file_path: path.join(os.tmpdir(), 'somewhere-else.ts') },
   })
 
   assert.equal(result.status, 0, result.stderr)
-  assert.equal(stateDir(box.home), null)
+  assert.equal(stateDir(box.home, box), null)
 })
 
 // --- verify-project.sh ------------------------------------------------------------------
 
 test('a failing verification blocks the Stop', t => {
   const box = sandbox(t)
-  enableVerify(box.project, 'echo "boom" >&2\nexit 1\n')
+  enableVerify(box, 'echo "boom" >&2\nexit 1\n')
   fs.writeFileSync(path.join(box.project, 'src/index.ts'), 'export const x = 1\n')
 
   const result = runHook(VERIFY_HOOK, box, {})
@@ -223,7 +240,7 @@ test('a failing verification blocks the Stop', t => {
 
 test('a passing verification does not block', t => {
   const box = sandbox(t)
-  enableVerify(box.project, 'exit 0\n')
+  enableVerify(box, 'exit 0\n')
   fs.writeFileSync(path.join(box.project, 'src/index.ts'), 'export const x = 1\n')
 
   const result = runHook(VERIFY_HOOK, box, {})
@@ -234,7 +251,7 @@ test('a passing verification does not block', t => {
 test('"no verification strategy applies" is reported, not blocked', t => {
   const box = sandbox(t)
   // Exit 3 is what the generated .claude/verify.sh emits when it finds nothing to run.
-  enableVerify(box.project, 'echo "nothing to run" >&2\nexit 3\n')
+  enableVerify(box, 'echo "nothing to run" >&2\nexit 3\n')
   fs.writeFileSync(path.join(box.project, 'src/index.ts'), 'export const x = 1\n')
 
   const result = runHook(VERIFY_HOOK, box, {})
@@ -246,7 +263,7 @@ test('"no verification strategy applies" is reported, not blocked', t => {
 
 test('a missing command is reported with the remediation, not blocked', t => {
   const box = sandbox(t)
-  enableVerify(box.project, 'exit 127\n')
+  enableVerify(box, 'exit 127\n')
   fs.writeFileSync(path.join(box.project, 'src/index.ts'), 'export const x = 1\n')
 
   const result = runHook(VERIFY_HOOK, box, {})
@@ -257,7 +274,7 @@ test('a missing command is reported with the remediation, not blocked', t => {
 
 test('an enabled gate with nothing configured reports instead of blocking forever', t => {
   const box = sandbox(t)
-  fs.writeFileSync(path.join(box.project, '.claude', 'verify-on-stop'), '')
+  grant(box, 'verify-on-stop')
   fs.writeFileSync(path.join(box.project, 'src/index.ts'), 'export const x = 1\n')
 
   const result = runHook(VERIFY_HOOK, box, {})
@@ -270,7 +287,7 @@ test('a session that changed nothing skips verification entirely', t => {
   const box = sandbox(t)
   // A tree left dirty by generated output would defeat this, which is why init-project.sh
   // teaches git to ignore graft/.
-  enableVerify(box.project, 'echo "verify.sh should not have run" >&2\nexit 1\n')
+  enableVerify(box, 'echo "verify.sh should not have run" >&2\nexit 1\n')
   box.git(['add', '-A'])
   box.git(['-c', 'commit.gpgsign=false', 'commit', '--quiet', '-m', 'enable gate'])
 
@@ -282,7 +299,7 @@ test('a session that changed nothing skips verification entirely', t => {
 
 test('a task that committed its own edits is still verified', t => {
   const box = sandbox(t)
-  enableVerify(box.project, 'exit 1\n')
+  enableVerify(box, 'exit 1\n')
   box.git(['add', '-A'])
   box.git(['-c', 'commit.gpgsign=false', 'commit', '--quiet', '-m', 'enable gate'])
 
@@ -300,7 +317,7 @@ test('a task that committed its own edits is still verified', t => {
 
 test('a Stop that is already reacting to a Stop hook does not recurse', t => {
   const box = sandbox(t)
-  enableVerify(box.project, 'echo "verify.sh should not have run" >&2\nexit 1\n')
+  enableVerify(box, 'echo "verify.sh should not have run" >&2\nexit 1\n')
   fs.writeFileSync(path.join(box.project, 'src/index.ts'), 'export const x = 1\n')
 
   const result = runHook(VERIFY_HOOK, box, { stop_hook_active: true })

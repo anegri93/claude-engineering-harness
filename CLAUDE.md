@@ -48,6 +48,14 @@ verify) and `127` (missing command) are reported with their remediation and do n
 Anything else means the checks ran and something is wrong, and that blocks. A gate that
 misdiagnoses is a gate the user deletes, and then nothing is checked at all.
 
+**Consent to run repository code lives outside the repository.** The hooks are installed
+globally and fire in every repository the user opens, including a fresh clone, and two steps
+execute repository-shipped scripts (`verify.sh` at Stop, `preflight.sh` at init). Every
+enabling decision therefore reads from `~/.claude/harness-runtime/<project>/`, which only
+`init-project.sh` writes. Never add a code path that decides whether to run something based on
+a file the repository can ship — "did the harness write this file?" is a question about
+authorship, not about permission. `tests/consent.test.mjs` pins the boundary.
+
 **Every scripted Claude invocation is read-only.** `--safe-mode --tools "Read,Glob,Grep"
 --disallowedTools "mcp__*" --permission-mode dontAsk --no-session-persistence`, with
 `--json-schema`. The harness reads repositories; it never lets a scripted call write one.

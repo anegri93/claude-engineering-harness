@@ -18,6 +18,7 @@ Herramienta personal, hecha para mis propios proyectos. Se instala global en `~/
 - [El estándar de ingeniería](#el-estándar-de-ingeniería)
 - [Qué corre y cuándo](#qué-corre-y-cuándo)
 - [Para qué sirve cada archivo generado](#para-qué-sirve-cada-archivo-generado)
+- [Consentimiento](#consentimiento)
 - [Qué corre la verificación](#qué-corre-la-verificación)
 - [Proyecto nuevo](#proyecto-nuevo)
 - [Tests](#tests)
@@ -165,9 +166,9 @@ Los escribe `init-project.sh`, salvo donde se indica.
 | `.claude/engineering-baseline.md` | La lista legible de riesgos de ingeniería conocidos, cada uno con un ID estable y un estado. Este es el archivo que leés vos. La retención está acotada a 20 hallazgos activos y 15 resueltos/obsoletos, descartando primero la severidad más baja, para que siga valiendo la pena leerlo. |
 | `.claude/engineering-baseline.json` | Los mismos hallazgos como estado de máquina. Existe para que un hallazgo conserve su identidad entre refreshes en vez de reescribirse como uno nuevo cada vez. |
 | `.claude/verify.sh` | El comando de verificación de este proyecto, generado a partir del stack que detectó. Editalo con libertad: es tuyo. |
-| `.claude/preflight.sh` | Levanta la infraestructura local antes de que la verificación juzgue nada. Se genera solo si todavía no tenés uno; un preflight propio nunca se pisa. |
-| `.claude/verify-on-stop` | Un archivo marcador vacío. Su presencia es lo que habilita el gate de verificación en Stop. Borralo para apagar el gate en ese repo. |
-| `.claude/baseline-refresh-on-stop` | La misma idea para el refresh de línea base. Los dos marcadores se escriben recién después de probar una vez que ese paso funciona, así un repo donde la verificación no puede correr nunca se lleva un gate que falle para siempre. |
+| `.claude/preflight.sh` | Levanta la infraestructura local antes de que la verificación juzgue nada. Se genera solo si todavía no tenés uno; un preflight propio nunca se pisa, pero no se ejecuta hasta que vos lo apruebes — ver [Consentimiento](#consentimiento). |
+
+Los dos marcadores que habilitan los gates **no** están en el repositorio. Viven en `~/.claude/harness-runtime/<proyecto>/`, los escribe solo `init-project.sh`, y recién después de probar una vez que ese paso funciona. Ver [Consentimiento](#consentimiento).
 | `.claude/auto-compose` | Opcional, lo creás vos. Su presencia le indica al preflight que levante Docker Compose en un repo que de otro modo no lo referencia. |
 | `.claude/settings.json` | Configuración de Claude Code a nivel proyecto. |
 | `.mcp.json`, `.claude/skills/graft/`, `.claude/helpers/` | Los escribe `graft init`, no el harness. El harness los respalda primero y después deja que Graft sea el dueño. |
@@ -190,6 +191,43 @@ Los escribe `init-project.sh`, salvo donde se indica.
 | `harness-state.json` | El `model` y el `effortLevel` que tenía tu `settings.json` antes de la primera instalación, para que la desinstalación pueda restaurarlos. Se escribe una sola vez, una reinstalación no lo pisa, la desinstalación lo borra. |
 
 ---
+
+---
+
+## Consentimiento
+
+Los hooks se instalan de forma global, así que se disparan en todos los repositorios que abrís — incluido uno que acabás de clonar. Dos pasos del harness ejecutan scripts que viven en el repositorio: el gate de Stop corre `.claude/verify.sh`, y la inicialización corre `.claude/preflight.sh`.
+
+Entonces el permiso para correrlos no puede venir del repositorio. Y no viene:
+
+| Decisión | Dónde vive | Quién la puede escribir |
+|---|---|---|
+| ¿El gate de Stop está encendido para este proyecto? | `~/.claude/harness-runtime/<proyecto>/verify-on-stop` | `init-project.sh`, después de que la verificación pasó una vez |
+| ¿El refresh de línea base está encendido? | `~/.claude/harness-runtime/<proyecto>/baseline-refresh-on-stop` | lo mismo |
+| ¿Puede correr el `preflight.sh` propio de este repositorio? | `~/.claude/harness-runtime/<proyecto>/preflight-approved` | vos, con `--trust-preflight` |
+
+Qué significa en la práctica:
+
+```bash
+git clone https://github.com/alguien/su-proyecto
+cd su-proyecto && claude          # preguntá lo que quieras: ningún script suyo corre
+```
+
+No se ejecuta nada de ellos, porque nunca habilitaste nada para ese proyecto. Corré `init-project.sh` ahí y el harness regenera `verify.sh` a partir del stack que detecta, en vez de adoptar el de ellos.
+
+El `preflight.sh` es el único archivo que el harness no pisa, porque puede ser genuinamente tuyo. Si no lo generó el harness, la inicialización conserva su contenido y le saca el bit de ejecución — que es lo que testea cada camino de ejecución — y te avisa:
+
+```
+Preserved custom .claude/preflight.sh, but did NOT enable it.
+  Read /ruta/al/.claude/preflight.sh, then approve it with:
+    ~/.claude/harness-tools/init-project.sh --trust-preflight
+```
+
+La aprobación queda atada a ese archivo exacto. Editalo — o dejá que un `git pull` lo cambie — y hay que aprobarlo de nuevo.
+
+**Al actualizar:** los proyectos inicializados antes de esto usaban marcadores dentro del repositorio. Ya no se honran. El hook de Stop lo dice y nombra la solución; volvé a correr `init-project.sh` en cada proyecto para re-otorgarlo.
+
+**Lo que esto no cubre:** una vez que adoptaste un repositorio, su `verify.sh` es un script que corrés vos, y un `git pull` posterior lo puede cambiar. Es la misma confianza que le das a un `Makefile` o a un script de `package.json` — el harness no agrega una segunda capa encima.
 
 ## Qué corre la verificación
 

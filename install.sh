@@ -3,6 +3,9 @@ set -euo pipefail
 
 SOURCE_DIR="$(cd "$(dirname "$0")" && pwd)"
 CLAUDE_DIR="${HOME}/.claude"
+# The single source of truth for the release string. Every other mention derives from it or
+# does not exist; a version restated in prose is a version that goes stale silently.
+HARNESS_VERSION="$(tr -d '[:space:]' < "$SOURCE_DIR/VERSION")"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 BACKUP_DIR="${CLAUDE_DIR}/harness-backups/${STAMP}"
 mkdir -p "$CLAUDE_DIR" "$BACKUP_DIR"
@@ -122,6 +125,10 @@ for hook in "$SOURCE_DIR"/src/hooks/*.sh; do
   install_file "$hook" "$CLAUDE_DIR/hooks/$(basename "$hook")"
 done
 
+# Named rather than globbed: VERSION sits at the repository root by convention, not in a
+# payload directory. uninstall removes harness/ wholesale, so it needs no removal line.
+install_file "$SOURCE_DIR/VERSION" "$CLAUDE_DIR/harness/VERSION"
+
 mkdir -p "$CLAUDE_DIR/harness/project-template"
 cp -R "$SOURCE_DIR/project-template/." "$CLAUDE_DIR/harness/project-template/"
 
@@ -151,7 +158,7 @@ else
 fi
 
 echo
-echo "Claude Engineering Harness v6 installed."
+echo "Claude Engineering Harness ${HARNESS_VERSION} installed."
 echo "Backup: $BACKUP_DIR"
 echo "Restart Claude Code so hooks, skills, agents, model settings, and Graft wiring are reloaded."
 # Read back from HARNESS_DEFAULTS rather than restated here, so this cannot report a model
@@ -164,4 +171,3 @@ node -e '
   })
 ' "$SOURCE_DIR/tools/settings-io.mjs"
 echo "For a project: cd into the repo and run ~/.claude/harness-tools/init-project.sh"
-echo "v6 adds automatic local-environment preflight before verification and keeps Graft updated to the latest available release. The living baseline remains automatic after verified edits."

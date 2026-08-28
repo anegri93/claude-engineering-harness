@@ -15,12 +15,6 @@ if command -v git >/dev/null 2>&1 && git rev-parse --show-toplevel >/dev/null 2>
   cd "$PROJECT_DIR" 2>/dev/null || exit 0
 fi
 
-VERIFY_ENABLED=false
-BASELINE_ENABLED=false
-[[ -f .claude/verify-on-stop ]] && VERIFY_ENABLED=true
-[[ -f .claude/baseline-refresh-on-stop ]] && BASELINE_ENABLED=true
-[[ "$VERIFY_ENABLED" == true || "$BASELINE_ENABLED" == true ]] || exit 0
-
 PROJECT_SLUG="$(printf '%s' "$(basename "$PROJECT_DIR")" | tr -cs 'A-Za-z0-9._-' '_')"
 if command -v shasum >/dev/null 2>&1; then
   PROJECT_HASH="$(printf '%s' "$PROJECT_DIR" | shasum -a 256 | awk '{print substr($1,1,12)}')"
@@ -30,6 +24,30 @@ else
   PROJECT_HASH="nohash"
 fi
 STATE_DIR="${HOME}/.claude/harness-runtime/${PROJECT_SLUG}_${PROJECT_HASH}"
+
+# Consent lives outside the repository, on purpose. This hook is installed globally, so it
+# fires in every repository the user opens, including one they just cloned — and step three
+# below executes a script the repository ships. Reading the enabling marker from inside that
+# same repository meant a clone could grant the harness permission to run the clone's own
+# code, with no action from the user beyond asking Claude a question. Only init-project.sh
+# writes here, only after verification passed once, and a clone cannot reach it.
+VERIFY_ENABLED=false
+BASELINE_ENABLED=false
+[[ -f "$STATE_DIR/verify-on-stop" ]] && VERIFY_ENABLED=true
+[[ -f "$STATE_DIR/baseline-refresh-on-stop" ]] && BASELINE_ENABLED=true
+
+if [[ "$VERIFY_ENABLED" != true && "$BASELINE_ENABLED" != true ]]; then
+  # A project initialized before consent moved out of the repository would otherwise go quiet
+  # with no explanation. The in-repo marker is reported, never honoured: honouring it is the
+  # whole vulnerability. Printing on every Stop is deliberate and ends as soon as it is fixed.
+  if [[ -f .claude/verify-on-stop || -f .claude/baseline-refresh-on-stop ]]; then
+    echo "Engineering verification is NOT running in this project." >&2
+    echo "It was enabled by a marker inside the repository, which the harness no longer trusts:" >&2
+    echo "a cloned repository could use it to have its own .claude/verify.sh executed." >&2
+    echo "Re-enable it for this project with: ~/.claude/harness-tools/init-project.sh" >&2
+  fi
+  exit 0
+fi
 
 TREE_CHANGED=true
 if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -127,8 +145,8 @@ if [[ "$VERIFY_ENABLED" == true && "$TREE_CHANGED" == true ]]; then
       echo "This is an environment condition, not a defect in the change under review." >&2
     fi
   else
-    echo "Engineering verification could not run: .claude/verify-on-stop is present, but this" >&2
-    echo "project configures no verification command." >&2
+    echo "Engineering verification could not run: this project is enabled for Stop verification," >&2
+    echo "but configures no verification command." >&2
     echo "Create .claude/verify.sh or add a package.json script named verify." >&2
   fi
 fi

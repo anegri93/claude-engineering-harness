@@ -18,12 +18,25 @@ if command -v git >/dev/null 2>&1 && git -C "$PROJECT_DIR" rev-parse --show-topl
 fi
 cd "$PROJECT_DIR" 2>/dev/null || exit 0
 
+PROJECT_SLUG="$(printf '%s' "$(basename "$PROJECT_DIR")" | tr -cs 'A-Za-z0-9._-' '_')"
+if command -v shasum >/dev/null 2>&1; then
+  PROJECT_HASH="$(printf '%s' "$PROJECT_DIR" | shasum -a 256 | awk '{print substr($1,1,12)}')"
+elif command -v sha256sum >/dev/null 2>&1; then
+  PROJECT_HASH="$(printf '%s' "$PROJECT_DIR" | sha256sum | awk '{print substr($1,1,12)}')"
+else
+  PROJECT_HASH="nohash"
+fi
+STATE_DIR="${HOME}/.claude/harness-runtime/${PROJECT_SLUG}_${PROJECT_HASH}"
+
 # The edit record feeds two consumers: the incremental baseline refresh, and the Stop
 # verification gate, which consults it when git reports a clean tree because the task
 # committed its own work. Record edits whenever either consumer is enabled.
+#
+# Both markers are read from the user's state directory rather than the repository, matching
+# verify-project.sh: a cloned repository must not be able to switch harness behaviour on.
 TRACK=false
-[[ -f .claude/verify-on-stop ]] && TRACK=true
-[[ -f .claude/baseline-refresh-on-stop && -f .claude/engineering-baseline.json ]] && TRACK=true
+[[ -f "$STATE_DIR/verify-on-stop" ]] && TRACK=true
+[[ -f "$STATE_DIR/baseline-refresh-on-stop" && -f .claude/engineering-baseline.json ]] && TRACK=true
 [[ "$TRACK" == true ]] || exit 0
 
 FILE_PATH=""
@@ -65,15 +78,6 @@ case "$REL_PATH" in
     ;;
 esac
 
-PROJECT_SLUG="$(printf '%s' "$(basename "$PROJECT_DIR")" | tr -cs 'A-Za-z0-9._-' '_')"
-if command -v shasum >/dev/null 2>&1; then
-  PROJECT_HASH="$(printf '%s' "$PROJECT_DIR" | shasum -a 256 | awk '{print substr($1,1,12)}')"
-elif command -v sha256sum >/dev/null 2>&1; then
-  PROJECT_HASH="$(printf '%s' "$PROJECT_DIR" | sha256sum | awk '{print substr($1,1,12)}')"
-else
-  PROJECT_HASH="nohash"
-fi
-STATE_DIR="${HOME}/.claude/harness-runtime/${PROJECT_SLUG}_${PROJECT_HASH}"
 mkdir -p "$STATE_DIR"
 touch "$STATE_DIR/baseline-dirty"
 printf '%s\n' "$REL_PATH" >> "$STATE_DIR/changed-files.txt"

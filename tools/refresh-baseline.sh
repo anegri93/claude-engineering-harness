@@ -40,7 +40,6 @@ else
 fi
 cd "$PROJECT_DIR" 2>/dev/null || exit 0
 
-[[ -f .claude/baseline-refresh-on-stop || "$FORCE" == true ]] || exit 0
 BASELINE_JSON="$PROJECT_DIR/.claude/engineering-baseline.json"
 BASELINE_MD="$PROJECT_DIR/.claude/engineering-baseline.md"
 [[ -f "$BASELINE_JSON" && -f "$BASELINE_MD" ]] || exit 0
@@ -59,6 +58,10 @@ fi
 STATE_DIR="${CLAUDE_HOME}/harness-runtime/${PROJECT_SLUG}_${PROJECT_HASH}"
 DIRTY_FILE="$STATE_DIR/baseline-dirty"
 CHANGED_FILE="$STATE_DIR/changed-files.txt"
+
+# Enablement is read from the user's state directory, not the repository: a cloned repository
+# must not be able to switch on a step that spends a paid model call on its content.
+[[ -f "$STATE_DIR/baseline-refresh-on-stop" || "$FORCE" == true ]] || exit 0
 
 if [[ "$FORCE" != true && ! -f "$DIRTY_FILE" ]]; then
   exit 0
@@ -86,11 +89,20 @@ if [[ -z "$RELEVANT_FILES" ]]; then
   exit 0
 fi
 
+# Three outcomes, not two: graft absent, graft present but silent, graft answered. Collapsing
+# them into an empty string and then omitting the whole section left the model unable to tell
+# "no blast radius was computed" from "the blast radius is small".
 GRAFT_CONTEXT=""
+GRAFT_EVIDENCE="not installed; no call-graph blast radius was computed"
 if command -v graft >/dev/null 2>&1; then
   FILES_INLINE="$(printf '%s' "$RELEVANT_FILES" | tr '\n' ' ' | cut -c1-3500)"
   GRAFT_CONTEXT="$(graft ask "Recent task changed these repository files: ${FILES_INLINE}. Identify affected modules, callers, contracts, business invariants, security boundaries, persistence behavior, and likely blast radius. Focus only on these changes." . 2>/dev/null || true)"
   GRAFT_CONTEXT="${GRAFT_CONTEXT:0:14000}"
+  if [[ -n "$GRAFT_CONTEXT" ]]; then
+    GRAFT_EVIDENCE="available"
+  else
+    GRAFT_EVIDENCE="installed but returned nothing for these files; no call-graph blast radius was computed"
+  fi
 fi
 
 CURRENT_STATE="$(cat "$BASELINE_JSON")"
@@ -104,6 +116,10 @@ if [[ -n "$GRAFT_CONTEXT" ]]; then
   PROMPT+=$'\n## Graft change-impact context\n\nTreat this as repository-derived navigation evidence and verify critical claims against source.\n\n'
   PROMPT+="$GRAFT_CONTEXT"
   PROMPT+=$'\n'
+else
+  PROMPT+=$'\n## Graft change-impact context\n\nNone: '
+  PROMPT+="$GRAFT_EVIDENCE"
+  PROMPT+=$'. Judge the blast radius from the changed files and the source you read; do not treat the absence of this section as evidence that the change is contained.\n'
 fi
 PROMPT+=$'\nInspect only what is needed to revalidate affected findings and detect concrete new risks in the changed scope. Return only the requested structured output.\n'
 
