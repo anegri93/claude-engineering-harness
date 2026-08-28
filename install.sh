@@ -119,6 +119,7 @@ echo "Backup: $BACKUP_DIR"
 echo "Restart Claude Code so hooks, skills, agents, model settings, and Graft wiring are reloaded."
 # Read back from HARNESS_DEFAULTS rather than restated here, so this cannot report a model
 # the installer did not actually apply.
+# shellcheck disable=SC2016  # the ${} below are JS template literals: shell expansion here is exactly what must not happen
 node -e '
   import("file://" + process.argv[1]).then(({ HARNESS_DEFAULTS }) => {
     console.log(`Default Claude model: ${HARNESS_DEFAULTS.model}`)

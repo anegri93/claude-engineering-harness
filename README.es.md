@@ -133,6 +133,10 @@ engineering-baseline.md se actualiza solo si algo cambió
 
 **El hook de Stop** corre verify primero y refresh segundo, y el orden es el punto. La falla de verificación bloquea la tarea. La falla del refresh es fail-soft: nunca convierte un buen cambio en una tarea fallida, y el estado sucio se conserva para que el próximo Stop reintente.
 
+También distingue un cambio roto de un chequeo que no pudo correr. El exit `3` (ninguna estrategia de verificación aplica) y el exit `127` (falta un comando requerido) son condiciones del entorno: se reportan en cada Stop, con el comando para resolverlas, y no bloquean. Cualquier otro código significa que los chequeos corrieron y algo está realmente mal, y eso sí bloquea. Bloquear por un Docker detenido mandaría al agente a reparar código que no está roto, sin ninguna edición que pudiera levantar el bloqueo.
+
+Una sesión que verificablemente no cambió nada se saltea la verificación. "No cambió nada" significa árbol de trabajo limpio *y* ninguna edición registrada: una tarea que edita archivos y después los commitea deja el árbol limpio, y se verifica igual.
+
 **El preflight** chequea si Docker está instalado pero detenido, si existe `supabase/config.toml` con el stack caído, y si el repo realmente referencia Docker Compose. Las dos esperas están acotadas y se pueden sobrescribir:
 
 ```bash
@@ -158,7 +162,7 @@ Los escribe `init-project.sh`, salvo donde se indica.
 | `CLAUDE.md` | Las instrucciones de tu proyecto. El harness actualiza solo su propio bloque gestionado y preserva todo lo demás que escribiste. |
 | `.claude/rules/project-architecture.md` | El perfil de arquitectura que escribió Opus después de leer tu repositorio: módulos, límites, flujo de datos, invariantes. Este es el archivo que hace que el consejo sea específico en vez de genérico. |
 | `.claude/rules/harness-*.md` | Reglas condicionales que se cargan solo para las rutas que coinciden. Integridad de backend, límites de seguridad, estrategia de testing, y lo que el análisis haya juzgado que este repo necesita. |
-| `.claude/engineering-baseline.md` | La lista legible de riesgos de ingeniería conocidos, cada uno con un ID estable y un estado. Este es el archivo que leés vos. |
+| `.claude/engineering-baseline.md` | La lista legible de riesgos de ingeniería conocidos, cada uno con un ID estable y un estado. Este es el archivo que leés vos. La retención está acotada a 20 hallazgos activos y 15 resueltos/obsoletos, descartando primero la severidad más baja, para que siga valiendo la pena leerlo. |
 | `.claude/engineering-baseline.json` | Los mismos hallazgos como estado de máquina. Existe para que un hallazgo conserve su identidad entre refreshes en vez de reescribirse como uno nuevo cada vez. |
 | `.claude/verify.sh` | El comando de verificación de este proyecto, generado a partir del stack que detectó. Editalo con libertad: es tuyo. |
 | `.claude/preflight.sh` | Levanta la infraestructura local antes de que la verificación juzgue nada. Se genera solo si todavía no tenés uno; un preflight propio nunca se pisa. |
