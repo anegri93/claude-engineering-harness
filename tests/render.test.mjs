@@ -434,6 +434,27 @@ test('a rule whose scope only widened keeps its filename', t => {
   assert.deepEqual(harnessRules(r), ['harness-testing.md'])
 })
 
+test('a scope respelled with a deeper wildcard keeps its filename', t => {
+  // The real case: the CSS glob came back as `app/**/*.css` where the previous run had said
+  // `app/*.css`. Same area, same rule, and the file was deleted and re-added under a new name.
+  const existing = withExistingRules(t, {
+    'harness-frontend.md': ['components/**', 'app/**/*.tsx', 'app/*.css']
+  })
+  const r = renderAnalysis(workspace(t), {
+    ...MINIMAL_ANALYSIS,
+    rule_groups: [{
+      title: 'Two UI kits, one palette',
+      filename: 'dos-vestidos-una-paleta',
+      paths: ['components/**', 'app/**/*.tsx', 'app/**/*.css'],
+      rules: ['Pick the kit by surface.']
+    }]
+  }, existing)
+  assert.deepEqual(harnessRules(r), ['harness-frontend.md'])
+  // Normalizing is for deciding identity only. The glob that reaches the file decides which
+  // files Claude loads the rule for, so it has to survive exactly as the model wrote it.
+  assert.match(r.read('rules/harness-frontend.md'), /- "app\/\*\*\/\*\.css"/)
+})
+
 test('a genuinely different grouping gets a new filename', t => {
   const existing = withExistingRules(t, { 'harness-testing.md': ['tests/**'] })
   const r = renderAnalysis(workspace(t), {

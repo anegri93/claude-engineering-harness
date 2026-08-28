@@ -54,6 +54,19 @@ The resulting harness should help future agents:
 - avoid known maintainability and correctness risks
 - make focused changes without unrelated refactors
 
+## Output language
+
+Write every prose field — titles, rationales, rules, summaries, findings, confidence notes — in
+the natural language this repository uses for its own documentation, comments and user-facing
+strings. That is not necessarily the language of this prompt. If the repository mixes languages,
+follow the dominant one. Identifiers, paths, commands and quoted code stay exactly as they appear
+in the source.
+
+If `.claude/rules/harness-*.md` files already exist here, a previous run of this same analysis
+wrote them: read one and keep writing in the language it uses. The rule set is regenerated whole
+on every re-initialization, so a language that changes between runs rewrites every file at once
+and leaves nothing in the diff to read.
+
 ## Output guidance
 
 - `summary`: concise description of what the system does and how it is organized.

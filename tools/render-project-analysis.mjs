@@ -122,7 +122,29 @@ function existingRules(dir) {
       const m = /^\s*-\s*"(.*)"\s*$/.exec(line)
       if (m) paths.add(m[1])
     }
-    if (paths.size) out.push({ slug: name.replace(/^harness-/, '').replace(/\.md$/, ''), paths })
+    if (paths.size) out.push({ slug: name.replace(/^harness-/, '').replace(/\.md$/, ''), scope: scopeOf(paths) })
+  }
+  return out
+}
+
+// Scope identity is the area a rule covers, not the exact spelling of the globs that cover it.
+// `app/**/*.css` and `app/*.css` reach the same area; the model returned one on one run and the
+// other on the next, and that one character renamed a rule whose content had not moved. A `**`
+// segment says how deep a glob descends inside an area, never which area is meant, so it is
+// dropped before comparing. Only for comparing: the frontmatter written to the file keeps the
+// glob exactly as the model wrote it, because there the depth is the meaning.
+function scopeOf(paths) {
+  const out = new Set()
+  for (const value of paths) {
+    const normalized = String(value)
+      .trim()
+      .replace(/^\.\//, '')
+      .replace(/\/{2,}/g, '/')
+      .split('/')
+      .filter((segment) => segment !== '**')
+      .join('/')
+      .replace(/\/+$/, '')
+    if (normalized) out.add(normalized)
   }
   return out
 }
@@ -286,8 +308,8 @@ for (let i = 0; i < groups.length; i++) {
   if (!slug) slug = `project-rule-${i + 1}`
   if (slug === 'project-architecture') slug = 'architecture-details'
 
-  const groupPaths = new Set(list(group?.paths, 12).map(safeGlob).filter(Boolean))
-  const match = existing.find((rule) => !claimedExisting.has(rule.slug) && sameScope(rule.paths, groupPaths))
+  const groupScope = scopeOf(list(group?.paths, 12).map(safeGlob).filter(Boolean))
+  const match = existing.find((rule) => !claimedExisting.has(rule.slug) && sameScope(rule.scope, groupScope))
   if (match) {
     claimedExisting.add(match.slug)
     slug = match.slug
