@@ -23,15 +23,17 @@ const MINIMAL_ANALYSIS = {
   architecture_summary: 'One layer that does one thing.'
 }
 
-function renderAnalysis(dir, structuredOutput) {
+function renderAnalysis(dir, structuredOutput, existingRules) {
   const input = path.join(dir, 'analysis-response.json')
   const out = path.join(dir, 'out')
   fs.writeFileSync(input, JSON.stringify({ structured_output: structuredOutput }))
+  const extra = existingRules ? ['--existing-rules', existingRules] : []
   const stdout = execFileSync(process.execPath, [
     path.join(TOOLS, 'render-project-analysis.mjs'),
     '--input', input,
     '--out', out,
-    '--name', 'fixture'
+    '--name', 'fixture',
+    ...extra
   ], { encoding: 'utf8', stdio: 'pipe' })
   return {
     out,
@@ -380,4 +382,88 @@ test('a filename that is nothing but the prefix falls back instead of vanishing'
     rule_groups: [{ title: '', filename: 'harness-', paths: ['src/**'], rules: ['Something.'] }]
   })
   assert.deepEqual(harnessRules(r), ['harness-project-rule-1.md'])
+})
+
+// A full re-analysis used to rename every rule file, because the model names the topic freely:
+// the same group came back as `data-layer` on one run and `acceso-a-datos-y-cache` on the next.
+// Six deletions and six additions in the diff, with no way to see what actually changed. The
+// declared scope is the steady part — across two real runs on the same repository, four of six
+// path sets were byte-identical and the other two only widened — so it is what identifies a
+// rule across runs.
+function withExistingRules(t, files) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'harness-existing-rules-'))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  for (const [name, paths] of Object.entries(files)) {
+    const frontmatter = `---\npaths:\n${paths.map(p => `  - ${JSON.stringify(p)}`).join('\n')}\n---\n\n# rule\n`
+    fs.writeFileSync(path.join(dir, name), frontmatter)
+  }
+  return dir
+}
+
+test('a renamed group keeps the filename of the rule whose scope it matches', t => {
+  // The real case: same four paths, brand-new name from the model.
+  const existing = withExistingRules(t, {
+    'harness-data-layer.md': ['lib/queries.ts', 'app/(app)/**', 'app/(huesped)/**', 'app/**/datos.ts']
+  })
+  const r = renderAnalysis(workspace(t), {
+    ...MINIMAL_ANALYSIS,
+    rule_groups: [{
+      title: 'Acceso a datos y caché',
+      filename: 'acceso-a-datos-y-cache',
+      paths: ['lib/queries.ts', 'app/(app)/**', 'app/(huesped)/**', 'app/**/datos.ts'],
+      rules: ['Queries live in one place.']
+    }]
+  }, existing)
+  assert.deepEqual(harnessRules(r), ['harness-data-layer.md'])
+})
+
+test('a rule whose scope only widened keeps its filename', t => {
+  // The other real case: `testing` gained `.github/workflows/**` and was renamed wholesale.
+  const existing = withExistingRules(t, {
+    'harness-testing.md': ['tests/**', 'vitest.config.ts', 'playwright.config.ts']
+  })
+  const r = renderAnalysis(workspace(t), {
+    ...MINIMAL_ANALYSIS,
+    rule_groups: [{
+      title: 'Estrategia de pruebas y entornos',
+      filename: 'estrategia-de-pruebas-y-entornos',
+      paths: ['tests/**', 'vitest.config.ts', 'playwright.config.ts', '.github/workflows/**'],
+      rules: ['Test behaviour, not shape.']
+    }]
+  }, existing)
+  assert.deepEqual(harnessRules(r), ['harness-testing.md'])
+})
+
+test('a genuinely different grouping gets a new filename', t => {
+  const existing = withExistingRules(t, { 'harness-testing.md': ['tests/**'] })
+  const r = renderAnalysis(workspace(t), {
+    ...MINIMAL_ANALYSIS,
+    rule_groups: [{
+      title: 'Migrations',
+      filename: 'supabase-schema',
+      paths: ['supabase/migrations/**'],
+      rules: ['Migrations are append-only.']
+    }]
+  }, existing)
+  assert.deepEqual(harnessRules(r), ['harness-supabase-schema.md'])
+})
+
+test('one existing rule cannot be claimed by two groups', t => {
+  const existing = withExistingRules(t, { 'harness-frontend.md': ['components/**'] })
+  const r = renderAnalysis(workspace(t), {
+    ...MINIMAL_ANALYSIS,
+    rule_groups: [
+      { title: 'A', filename: 'kit-uno', paths: ['components/**'], rules: ['One.'] },
+      { title: 'B', filename: 'kit-dos', paths: ['components/**'], rules: ['Two.'] }
+    ]
+  }, existing)
+  assert.deepEqual(harnessRules(r), ['harness-frontend.md', 'harness-kit-dos.md'])
+})
+
+test('with no existing rules on disk the model name is used unchanged', t => {
+  const r = renderAnalysis(workspace(t), {
+    ...MINIMAL_ANALYSIS,
+    rule_groups: [{ title: 'Data', filename: 'data-layer', paths: ['lib/**'], rules: ['One.'] }]
+  })
+  assert.deepEqual(harnessRules(r), ['harness-data-layer.md'])
 })

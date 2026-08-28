@@ -89,10 +89,59 @@ function yamlFrontmatter(paths) {
   return `---\npaths:\n${clean.map((p) => `  - ${JSON.stringify(p)}`).join('\n')}\n---\n\n`
 }
 
+// A full re-analysis renames every rule file: the model picks the topic name freely, so the
+// same group came back as `data-layer` on one run and `acceso-a-datos-y-cache` on the next.
+// Six files deleted and six added in the diff, with nothing to show what actually changed.
+//
+// The scope is far steadier than the name — measured across two real runs, four of six path
+// sets were byte-identical and the other two only widened. So an existing rule file whose
+// declared scope is the same set, or a subset, or a superset, is the same rule: it keeps its
+// filename and the diff shows the edit instead of a rename. Anything else is a genuinely
+// different grouping and gets the model's name.
+function existingRules(dir) {
+  if (!dir) return []
+  let names
+  try {
+    names = fs.readdirSync(dir)
+  } catch {
+    return []
+  }
+  const out = []
+  for (const name of names) {
+    if (!/^harness-.+\.md$/.test(name)) continue
+    let body
+    try {
+      body = fs.readFileSync(path.join(dir, name), 'utf8')
+    } catch {
+      continue
+    }
+    const frontmatter = /^---\n([\s\S]*?)\n---/.exec(body)
+    if (!frontmatter) continue
+    const paths = new Set()
+    for (const line of frontmatter[1].split('\n')) {
+      const m = /^\s*-\s*"(.*)"\s*$/.exec(line)
+      if (m) paths.add(m[1])
+    }
+    if (paths.size) out.push({ slug: name.replace(/^harness-/, '').replace(/\.md$/, ''), paths })
+  }
+  return out
+}
+
+// Same set, or one contains the other. No similarity threshold: a rule whose scope grew or
+// shrank is still that rule, and anything else is a different one.
+function sameScope(a, b) {
+  if (!a.size || !b.size) return false
+  const [small, large] = a.size <= b.size ? [a, b] : [b, a]
+  for (const value of small) if (!large.has(value)) return false
+  return true
+}
+
 const args = parseArgs(process.argv)
 const inputPath = requireArg(args, 'input')
 const outDir = requireArg(args, 'out')
 const projectName = requireArg(args, 'name')
+const existing = existingRules(args['existing-rules'])
+const claimedExisting = new Set()
 const kind = args.kind || 'Unknown'
 const stack = args.stack || 'Unknown'
 const packageManager = args['package-manager'] || 'Not detected'
@@ -236,6 +285,13 @@ for (let i = 0; i < groups.length; i++) {
     .replace(/^harness$/, '')
   if (!slug) slug = `project-rule-${i + 1}`
   if (slug === 'project-architecture') slug = 'architecture-details'
+
+  const groupPaths = new Set(list(group?.paths, 12).map(safeGlob).filter(Boolean))
+  const match = existing.find((rule) => !claimedExisting.has(rule.slug) && sameScope(rule.paths, groupPaths))
+  if (match) {
+    claimedExisting.add(match.slug)
+    slug = match.slug
+  }
   let finalSlug = slug
   let suffix = 2
   while (used.has(finalSlug)) finalSlug = `${slug}-${suffix++}`

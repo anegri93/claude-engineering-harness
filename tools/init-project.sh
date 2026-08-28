@@ -103,6 +103,7 @@ done
 CLAUDE_HOME="${HOME}/.claude"
 HARNESS_HOME="${CLAUDE_HOME}/harness"
 RENDERER="${CLAUDE_HOME}/harness-tools/render-project-analysis.mjs"
+PROGRESS_TOOL="${CLAUDE_HOME}/harness-tools/stream-progress.mjs"
 ANALYSIS_PROMPT_FILE="${HARNESS_HOME}/project-analysis-prompt.md"
 ANALYSIS_SCHEMA_FILE="${HARNESS_HOME}/project-analysis-schema.json"
 BASELINE_REFRESH_PROMPT_FILE="${HARNESS_HOME}/baseline-refresh-prompt.md"
@@ -123,7 +124,7 @@ if [[ ! -f "${HARNESS_HOME}/engineering.md" ]]; then
 fi
 
 if [[ "$AI_ANALYSIS" == true ]]; then
-  for required in "$ANALYSIS_PROMPT_FILE" "$ANALYSIS_SCHEMA_FILE" "$RENDERER"; do
+  for required in "$ANALYSIS_PROMPT_FILE" "$ANALYSIS_SCHEMA_FILE" "$RENDERER" "$PROGRESS_TOOL"; do
     if [[ ! -f "$required" ]]; then
       echo "Harness semantic-analysis component is missing: $required" >&2
       echo "Install or update Claude Engineering Harness (installed: ${HARNESS_VERSION})." >&2
@@ -606,8 +607,9 @@ AI_RISK_COUNT=0
 STAGE_DIR="$(mktemp -d -t claude-harness-stage.XXXXXX)"
 AI_RESPONSE_FILE="$(mktemp -t claude-harness-analysis.XXXXXX.json)"
 AI_ERROR_FILE="$(mktemp -t claude-harness-analysis.XXXXXX.log)"
+AI_STREAM_FILE="$(mktemp -t claude-harness-analysis.XXXXXX.ndjson)"
 cleanup() {
-  rm -rf "$STAGE_DIR" "$AI_RESPONSE_FILE" "$AI_ERROR_FILE" 2>/dev/null || true
+  rm -rf "$STAGE_DIR" "$AI_RESPONSE_FILE" "$AI_ERROR_FILE" "$AI_STREAM_FILE" 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -654,6 +656,13 @@ if [[ "$AI_ANALYSIS" == true ]]; then
 
   SCHEMA_JSON="$(tr -d '\n' < "$ANALYSIS_SCHEMA_FILE")"
 
+  # Streamed rather than buffered so the run is observable. `--output-format json` prints nothing
+  # until the last turn, and on a large repository this step takes minutes: the user could not
+  # tell a working analysis from a hung one, and a run that looks hung gets killed. The progress
+  # tool consumes the event stream, reports what the analysis is doing, and writes back the final
+  # result event, which is byte-for-byte what `--output-format json` would have emitted.
+  # stdin is closed explicitly: without it the CLI waits three seconds for piped input that this
+  # invocation never sends.
   set +e
   claude --safe-mode -p "$ANALYSIS_PROMPT" \
     --tools "Read,Glob,Grep" \
@@ -664,10 +673,20 @@ if [[ "$AI_ANALYSIS" == true ]]; then
     --effort "$ANALYSIS_EFFORT" \
     --max-turns 40 \
     --no-session-persistence \
-    --output-format json \
+    --verbose \
+    --output-format stream-json \
     --json-schema "$SCHEMA_JSON" \
-    >"$AI_RESPONSE_FILE" 2>"$AI_ERROR_FILE"
-  AI_EXIT=$?
+    </dev/null 2>"$AI_ERROR_FILE" \
+    | node "$PROGRESS_TOOL" \
+        --result-out "$AI_RESPONSE_FILE" \
+        --raw-out "$AI_STREAM_FILE" \
+        --label "repository analysis" \
+        --turn-budget 40
+  # Copied in one step on purpose: Bash 3.2 resets PIPESTATUS after a plain assignment, so
+  # reading [0] into a variable first leaves [1] unbound under `set -u`.
+  ANALYSIS_PIPE_STATUS=( "${PIPESTATUS[@]}" )
+  AI_EXIT="${ANALYSIS_PIPE_STATUS[0]}"
+  PROGRESS_EXIT="${ANALYSIS_PIPE_STATUS[1]}"
   set -e
 
   if [[ $AI_EXIT -ne 0 ]]; then
@@ -679,10 +698,23 @@ if [[ "$AI_ANALYSIS" == true ]]; then
     exit "$AI_EXIT"
   fi
 
+  # The CLI can exit 0 having streamed no result event — a truncated stream is not a completed
+  # analysis, and rendering from a partial stream would produce a baseline that looks grounded.
+  if [[ $PROGRESS_EXIT -ne 0 ]]; then
+    echo "Claude repository analysis produced no usable result event." >&2
+    echo "--- last stream lines ---" >&2
+    tail -n 20 "$AI_STREAM_FILE" >&2 || true
+    tail -n 40 "$AI_ERROR_FILE" >&2 || true
+    [[ "$OLD_MARKER" == true ]] && touch "$MARKER"
+    [[ "$OLD_BASELINE_MARKER" == true ]] && touch "$BASELINE_REFRESH_MARKER"
+    exit "$PROGRESS_EXIT"
+  fi
+
   set +e
   RENDER_RESULT="$(node "$RENDERER" \
     --input "$AI_RESPONSE_FILE" \
     --out "$STAGE_DIR" \
+    --existing-rules "$PROJECT_DIR/.claude/rules" \
     --name "$PROJECT_NAME" \
     --kind "$PROJECT_KIND" \
     --stack "$STACK_TEXT" \
@@ -1059,10 +1091,14 @@ if [[ "$VERIFY" == true ]]; then
   echo
   echo "Preparing local verification environment..."
   echo "--------------------------------------------------------------------------"
+  # This is a one-shot command the user ran deliberately, so it puts the machine back the way
+  # it found it. The Stop gate deliberately does not: restarting the stack before every task
+  # would cost far more than the gate is worth, so there the preflight announces it instead.
+  INFRA_STARTED_FILE="$(mktemp -t harness-infra-started.XXXXXX)"
   PREFLIGHT_EXIT=0
   if [[ -x "$PREFLIGHT_FILE" ]]; then
     set +e
-    "$PREFLIGHT_FILE"
+    HARNESS_INFRA_STARTED_FILE="$INFRA_STARTED_FILE" "$PREFLIGHT_FILE"
     PREFLIGHT_EXIT=$?
     set -e
   fi
@@ -1088,6 +1124,28 @@ if [[ "$VERIFY" == true ]]; then
     set -e
     echo "--------------------------------------------------------------------------"
   fi
+
+  # Before reporting, undo the infrastructure this run started. Failure to stop is reported and
+  # never fatal: the verification result is already decided, and a stack left up is a nuisance,
+  # not a reason to fail an initialization that otherwise succeeded.
+  if [[ -s "$INFRA_STARTED_FILE" ]] && grep -Fqx supabase "$INFRA_STARTED_FILE" 2>/dev/null; then
+    echo
+    echo "Stopping the Supabase stack this run started (it was not running before)..."
+    SUPABASE_STOP=()
+    if command -v supabase >/dev/null 2>&1; then
+      SUPABASE_STOP=(supabase)
+    elif [[ -x node_modules/.bin/supabase ]]; then
+      SUPABASE_STOP=(node_modules/.bin/supabase)
+    fi
+    if [[ ${#SUPABASE_STOP[@]} -gt 0 ]]; then
+      "${SUPABASE_STOP[@]}" stop >/dev/null 2>&1 \
+        && echo "Supabase stopped." \
+        || echo "Could not stop Supabase; stop it by hand with: ${SUPABASE_STOP[*]} stop" >&2
+    else
+      echo "Supabase CLI is no longer resolvable; stop the stack by hand." >&2
+    fi
+  fi
+  rm -f "$INFRA_STARTED_FILE"
 
   if [[ "$PREFLIGHT_STATUS" == "passed" && $VERIFY_EXIT -eq 0 ]]; then
     VERIFY_STATUS="passed"

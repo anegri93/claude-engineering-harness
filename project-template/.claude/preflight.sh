@@ -109,6 +109,18 @@ ensure_supabase() {
   "${supabase_cmd[@]}" start
   wait_for_supabase
   echo "    Supabase is ready."
+
+  # Starting infrastructure and then leaving it running is a change to the machine the caller
+  # did not ask for, and saying nothing about it is how a project whose policy is "Supabase
+  # stays down" ends up with it up. Record it so a one-shot caller can put it back, and say so
+  # either way — the Stop gate deliberately leaves it running, because restarting the stack
+  # before every task would cost more than the gate is worth.
+  if [[ -n "${HARNESS_INFRA_STARTED_FILE:-}" ]]; then
+    printf 'supabase\n' >> "$HARNESS_INFRA_STARTED_FILE"
+  else
+    echo "    Note: Supabase was started by this preflight and is left running."
+    echo "          Stop it with: ${supabase_cmd[*]} stop"
+  fi
 }
 
 compose_file=""

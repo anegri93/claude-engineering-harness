@@ -186,7 +186,7 @@ The two markers that enable the gates are **not** in the repository. They live i
 | `agents/harness-engineering-code-reviewer.md` | A read-only reviewer agent that cannot edit, for an independent second opinion on a finished change. |
 | `hooks/mark-baseline-dirty.sh` | The PostToolUse hook. Records edited files, calls no model. |
 | `hooks/verify-project.sh` | The Stop hook. Runs preflight, verification, then refresh. |
-| `harness-tools/` | `init-project.sh` and `refresh-baseline.sh`, plus the renderers that turn structured model output into Markdown, and the settings helpers used by install and uninstall. |
+| `harness-tools/` | `init-project.sh` and `refresh-baseline.sh`, plus the renderers that turn structured model output into Markdown, the progress reporter that makes the streamed analysis observable while it runs, and the settings helpers used by install and uninstall. |
 | `harness-runtime/<project>/` | Per-project dirty state written by the PostToolUse hook and consumed by the refresh. Disposable. |
 | `harness-state.json` | The `model` and `effortLevel` your `settings.json` had before the first install, so uninstall can put them back. Written once, never overwritten by a repeat install, deleted by uninstall. |
 

@@ -186,7 +186,7 @@ Los dos marcadores que habilitan los gates **no** están en el repositorio. Vive
 | `agents/harness-engineering-code-reviewer.md` | Un agente revisor de solo lectura que no puede editar, para una segunda opinión independiente sobre un cambio terminado. |
 | `hooks/mark-baseline-dirty.sh` | El hook PostToolUse. Registra archivos editados, no llama a ningún modelo. |
 | `hooks/verify-project.sh` | El hook de Stop. Corre preflight, verificación, y después refresh. |
-| `harness-tools/` | `init-project.sh` y `refresh-baseline.sh`, más los renderers que convierten la salida estructurada del modelo en Markdown, y los helpers de settings que usan install y uninstall. |
+| `harness-tools/` | `init-project.sh` y `refresh-baseline.sh`, más los renderers que convierten la salida estructurada del modelo en Markdown, el reporter de progreso que hace observable el análisis mientras corre, y los helpers de settings que usan install y uninstall. |
 | `harness-runtime/<proyecto>/` | Estado sucio por proyecto, escrito por el hook PostToolUse y consumido por el refresh. Descartable. |
 | `harness-state.json` | El `model` y el `effortLevel` que tenía tu `settings.json` antes de la primera instalación, para que la desinstalación pueda restaurarlos. Se escribe una sola vez, una reinstalación no lo pisa, la desinstalación lo borra. |
 

@@ -136,6 +136,8 @@ Requirements:
 - Avoid excessive mocking when a stable integration test gives stronger confidence.
 - Do not weaken or delete a valid test merely to make a change pass.
 - Do not chase coverage numbers without a risk-based reason.
+- A new test must be shown to fail against the unfixed code. A test that passes both before
+  and after is worse than none: it reports coverage that does not exist.
 
 ## Living engineering baseline
 
@@ -174,3 +176,17 @@ Before considering a code change complete:
 If a verification step cannot be executed, state exactly what was not verified and why.
 
 Never claim a change is verified when the relevant checks were not actually run.
+
+## Reporting a finished change
+
+A pass count is not evidence. A suite is green when nothing exercises the new behavior just
+as surely as when everything does, so "all tests pass" tells the reader nothing about the
+change they are being asked to trust.
+
+When reporting a completed feature or fix, list the tests that cover it — each one by name,
+with one line saying what it asserts and which broken behavior it would catch:
+
+- Name every test added or changed, and say what each pins.
+- Say plainly when a behavior is covered by no test, and why.
+- Where a regression test was written, state that it was confirmed to fail before the fix.
+- Report the counts last. They are context for the list, not a substitute for it.
