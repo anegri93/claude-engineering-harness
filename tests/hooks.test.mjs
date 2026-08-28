@@ -104,6 +104,7 @@ function sandbox(t) {
   })
   fs.mkdirSync(path.join(home, '.claude'), { recursive: true })
   fs.mkdirSync(path.join(project, '.claude'), { recursive: true })
+  fs.mkdirSync(path.join(project, 'src'), { recursive: true })
 
   const git = args => execFileSync('git', ['-C', project, ...args], { encoding: 'utf8' })
   git(['init', '--quiet'])
