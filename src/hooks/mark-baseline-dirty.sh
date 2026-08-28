@@ -18,8 +18,13 @@ if command -v git >/dev/null 2>&1 && git -C "$PROJECT_DIR" rev-parse --show-topl
 fi
 cd "$PROJECT_DIR" 2>/dev/null || exit 0
 
-[[ -f .claude/baseline-refresh-on-stop ]] || exit 0
-[[ -f .claude/engineering-baseline.json ]] || exit 0
+# The edit record feeds two consumers: the incremental baseline refresh, and the Stop
+# verification gate, which consults it when git reports a clean tree because the task
+# committed its own work. Record edits whenever either consumer is enabled.
+TRACK=false
+[[ -f .claude/verify-on-stop ]] && TRACK=true
+[[ -f .claude/baseline-refresh-on-stop && -f .claude/engineering-baseline.json ]] && TRACK=true
+[[ "$TRACK" == true ]] || exit 0
 
 FILE_PATH=""
 if command -v node >/dev/null 2>&1; then
@@ -38,6 +43,11 @@ fi
 [[ -n "$FILE_PATH" ]] || exit 0
 
 if [[ "$FILE_PATH" = /* ]]; then
+  # The project root comes from git and is therefore physical, while the event carries the
+  # path as the tool used it. Compare like with like, or every edit under a symlinked
+  # ancestor is silently discarded as being outside the repository.
+  FILE_DIR="$(cd "$(dirname "$FILE_PATH")" 2>/dev/null && pwd -P)" || FILE_DIR=""
+  [[ -n "$FILE_DIR" ]] && FILE_PATH="${FILE_DIR}/$(basename "$FILE_PATH")"
   case "$FILE_PATH" in
     "$PROJECT_DIR"/*) REL_PATH="${FILE_PATH#"$PROJECT_DIR"/}" ;;
     *) exit 0 ;;
@@ -46,6 +56,9 @@ else
   REL_PATH="${FILE_PATH#./}"
 fi
 
+# Harness bookkeeping and build output are not engineering changes. This list is mirrored
+# as a grep -Ev regex in tools/refresh-baseline.sh, which re-filters defensively for --force
+# runs; change one and change the other. tests/hooks.test.mjs asserts the two agree.
 case "$REL_PATH" in
   .claude/engineering-baseline.md|.claude/engineering-baseline.json|.claude/rules/*|.claude/verify.sh|.claude/verify-on-stop|.claude/baseline-refresh-on-stop|graft/*|node_modules/*|dist/*|build/*|coverage/*)
     exit 0

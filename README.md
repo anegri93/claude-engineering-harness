@@ -133,6 +133,10 @@ engineering-baseline.md updated only if something changed
 
 **The Stop hook** runs verify first and refresh second, and the order is the point. Verification failure blocks the task. Refresh failure is fail-soft: it never turns a good change into a failed task, and the dirty state is kept so the next Stop retries.
 
+It also distinguishes a broken change from a check it could not run. Exit `3` (no verification strategy applies) and exit `127` (a required command is missing) are environment conditions: they are reported on every Stop, with the command to fix them, and they do not block. Anything else means the checks ran and something is genuinely wrong, and that blocks. Blocking on a stopped Docker daemon would send the agent to repair code that is not broken, with no edit that could ever clear the block.
+
+A session that verifiably changed nothing skips verification. "Changed nothing" means both a clean working tree and no recorded edit — a task that edits files and then commits them leaves a clean tree, and is still verified.
+
 **The preflight** checks whether Docker is installed but stopped, whether `supabase/config.toml` exists with the stack down, and whether the repo genuinely references Docker Compose. Both waits are bounded and overridable:
 
 ```bash
@@ -158,7 +162,7 @@ Written by `init-project.sh`, except where noted.
 | `CLAUDE.md` | Your project instructions. The harness updates only its own managed block and preserves everything else you wrote. |
 | `.claude/rules/project-architecture.md` | The architecture profile Opus wrote after reading your repository: modules, boundaries, data flow, invariants. This is the file that makes advice specific instead of generic. |
 | `.claude/rules/harness-*.md` | Conditional rules that load only for matching paths. Backend integrity, security boundaries, testing strategy, and whatever else the analysis judged this repo needs. |
-| `.claude/engineering-baseline.md` | The human-readable list of known engineering risks, each with a stable ID and a state. This is the file you read. |
+| `.claude/engineering-baseline.md` | The human-readable list of known engineering risks, each with a stable ID and a state. This is the file you read. Retention is capped at 20 active and 15 resolved/stale findings, lowest severity dropped first, so it stays worth reading. |
 | `.claude/engineering-baseline.json` | The same findings as machine state. It exists so a finding keeps its identity across refreshes instead of being rewritten as a new one every time. |
 | `.claude/verify.sh` | The verification command for this project, generated from the stack it detected. Edit it freely — it is yours. |
 | `.claude/preflight.sh` | Brings up local infrastructure before verification judges anything. Generated only if you do not already have one; a custom preflight is never overwritten. |

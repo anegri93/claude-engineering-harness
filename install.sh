@@ -117,7 +117,14 @@ echo
 echo "Claude Engineering Harness v6 installed."
 echo "Backup: $BACKUP_DIR"
 echo "Restart Claude Code so hooks, skills, agents, model settings, and Graft wiring are reloaded."
-echo "Default Claude model: claude-opus-5"
-echo "Default effort: high"
+# Read back from HARNESS_DEFAULTS rather than restated here, so this cannot report a model
+# the installer did not actually apply.
+# shellcheck disable=SC2016  # the ${} below are JS template literals: shell expansion here is exactly what must not happen
+node -e '
+  import("file://" + process.argv[1]).then(({ HARNESS_DEFAULTS }) => {
+    console.log(`Default Claude model: ${HARNESS_DEFAULTS.model}`)
+    console.log(`Default effort: ${HARNESS_DEFAULTS.effortLevel}`)
+  })
+' "$SOURCE_DIR/tools/settings-io.mjs"
 echo "For a project: cd into the repo and run ~/.claude/harness-tools/init-project.sh"
 echo "v6 adds automatic local-environment preflight before verification and keeps Graft updated to the latest available release. The living baseline remains automatic after verified edits."

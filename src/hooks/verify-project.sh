@@ -21,6 +21,16 @@ BASELINE_ENABLED=false
 [[ -f .claude/baseline-refresh-on-stop ]] && BASELINE_ENABLED=true
 [[ "$VERIFY_ENABLED" == true || "$BASELINE_ENABLED" == true ]] || exit 0
 
+PROJECT_SLUG="$(printf '%s' "$(basename "$PROJECT_DIR")" | tr -cs 'A-Za-z0-9._-' '_')"
+if command -v shasum >/dev/null 2>&1; then
+  PROJECT_HASH="$(printf '%s' "$PROJECT_DIR" | shasum -a 256 | awk '{print substr($1,1,12)}')"
+elif command -v sha256sum >/dev/null 2>&1; then
+  PROJECT_HASH="$(printf '%s' "$PROJECT_DIR" | sha256sum | awk '{print substr($1,1,12)}')"
+else
+  PROJECT_HASH="nohash"
+fi
+STATE_DIR="${HOME}/.claude/harness-runtime/${PROJECT_SLUG}_${PROJECT_HASH}"
+
 TREE_CHANGED=true
 if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   if git diff --quiet --ignore-submodules -- 2>/dev/null \
@@ -30,13 +40,59 @@ if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/n
   fi
 fi
 
+# A clean tree is inconclusive, not proof that nothing happened: a task that edits files
+# and then commits them ends clean, and that is precisely when the change is about to be
+# pushed. The PostToolUse edit record is the harness's own account of what the task
+# touched, so it decides when git cannot.
+if [[ "$TREE_CHANGED" == false && -f "$STATE_DIR/baseline-dirty" ]]; then
+  TREE_CHANGED=true
+fi
+
+# Exit-code contract, shared with the .claude/verify.sh this harness generates:
+#   0             the checks ran and passed
+#   3             no verification strategy applies to this project
+#   127           a required command is not installed
+#   anything else the checks ran and something is genuinely wrong
+#
+# Only the last case is the agent's problem. Reporting a stopped Docker daemon or a missing
+# package manager as "fix the verification errors" sends the agent to repair code that is not
+# broken, and no edit it can make will ever clear the block. That is how a gate stops being
+# trusted and gets switched off, at which point the harness guarantees nothing at all. So a
+# condition the environment owns is announced on every Stop and does not block.
+report_environment() {
+  local label="$1"
+  local status="$2"
+  local log_file="$3"
+
+  echo "Engineering verification could not run: $label (exit $status)." >&2
+  echo "This is an environment condition, not a defect in the change under review." >&2
+  if [[ "$status" -eq 127 ]]; then
+    echo "Install the missing command, then rerun: bash .claude/verify.sh" >&2
+  else
+    echo "Configure this project's checks in .claude/verify.sh, then rerun: bash .claude/verify.sh" >&2
+  fi
+  echo "--- verification output ---" >&2
+  tail -n 40 "$log_file" >&2
+}
+
 run_and_report() {
   local label="$1"
   shift
   local log_file
+  local status
   log_file="$(mktemp -t claude-verify.XXXXXX)"
 
-  if "$@" >"$log_file" 2>&1; then
+  # Deliberately not `if "$@"`: the exit code has to be read, not just tested for zero.
+  "$@" >"$log_file" 2>&1
+  status=$?
+
+  if [[ "$status" -eq 0 ]]; then
+    rm -f "$log_file"
+    return 0
+  fi
+
+  if [[ "$status" -eq 3 || "$status" -eq 127 ]]; then
+    report_environment "$label" "$status" "$log_file"
     rm -f "$log_file"
     return 0
   fi
@@ -63,13 +119,17 @@ if [[ "$VERIFY_ENABLED" == true && "$TREE_CHANGED" == true ]]; then
     elif command -v npm >/dev/null 2>&1; then
       run_and_report "npm run verify" npm run verify
     else
-      echo "Stop verification is enabled, but no supported package manager is available." >&2
-      exit 2
+      # Same contract as run_and_report: nothing was checked, so nothing can be reported as
+      # broken. Announced every Stop rather than blocking, because no change to this
+      # repository can install a package manager.
+      echo "Engineering verification could not run: package.json declares a verify script," >&2
+      echo "but no supported package manager (pnpm, yarn, bun, npm) is on PATH." >&2
+      echo "This is an environment condition, not a defect in the change under review." >&2
     fi
   else
-    echo "Stop verification is enabled by .claude/verify-on-stop, but no verification command is configured." >&2
+    echo "Engineering verification could not run: .claude/verify-on-stop is present, but this" >&2
+    echo "project configures no verification command." >&2
     echo "Create .claude/verify.sh or add a package.json script named verify." >&2
-    exit 2
   fi
 fi
 
@@ -80,6 +140,13 @@ if [[ "$BASELINE_ENABLED" == true ]]; then
   if [[ -x "$REFRESH" ]]; then
     "$REFRESH" --project "$PROJECT_DIR" || true
   fi
+fi
+
+# The edit record has two consumers. The baseline refresh clears it when it runs; when the
+# refresh is not enabled, Stop verification is the last consumer and clears it here, so a
+# later session that changed nothing keeps the no-op fast path.
+if [[ "$BASELINE_ENABLED" != true ]]; then
+  rm -f "$STATE_DIR/baseline-dirty" "$STATE_DIR/changed-files.txt" 2>/dev/null || true
 fi
 
 exit 0

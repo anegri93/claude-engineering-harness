@@ -76,7 +76,10 @@ if [[ -z "$CHANGED_FILES" ]]; then
   exit 0
 fi
 
-# Ignore a task whose only edits were harness-generated files.
+# Ignore a task whose only edits were harness-generated files. The PostToolUse hook already
+# filters these out; this is the defensive re-filter for --force runs, where the changed set
+# comes from git instead. It mirrors the `case` list in src/hooks/mark-baseline-dirty.sh —
+# change one and change the other. tests/hooks.test.mjs asserts the two agree.
 RELEVANT_FILES="$(printf '%s\n' "$CHANGED_FILES" | grep -Ev '^(\.claude/(engineering-baseline\.(md|json)|rules/|verify\.sh|verify-on-stop|baseline-refresh-on-stop)|graft/|node_modules/|dist/|build/|coverage/)' || true)"
 if [[ -z "$RELEVANT_FILES" ]]; then
   rm -f "$DIRTY_FILE" "$CHANGED_FILE"
@@ -163,7 +166,10 @@ if [[ "$HAS_CHANGED" == "true" ]]; then
   RESOLVED="$(node -e 'const x=JSON.parse(process.argv[1]);process.stdout.write(String(x.resolved||0))' "$RENDER_RESULT")"
   ADDED="$(node -e 'const x=JSON.parse(process.argv[1]);process.stdout.write(String(x.added||0))' "$RENDER_RESULT")"
   CHANGED_COUNT="$(node -e 'const x=JSON.parse(process.argv[1]);process.stdout.write(String(x.changed_findings||0))' "$RENDER_RESULT")"
+  PRUNED="$(node -e 'const x=JSON.parse(process.argv[1]);process.stdout.write(String(x.pruned||0))' "$RENDER_RESULT")"
   echo "Engineering baseline refreshed: ${UPDATED} updated, ${RESOLVED} resolved, ${CHANGED_COUNT} changed, ${ADDED} new."
+  # Retention is not silent: dropping a finding is a decision the reader should see.
+  [[ "$PRUNED" == "0" ]] || echo "Retention cap dropped ${PRUNED} lowest-severity finding(s) from the baseline."
 else
   echo "Engineering baseline checked: no finding changes in this task's blast radius."
 fi
