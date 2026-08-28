@@ -46,6 +46,9 @@ else
   REL_PATH="${FILE_PATH#./}"
 fi
 
+# Harness bookkeeping and build output are not engineering changes. This list is mirrored
+# as a grep -Ev regex in tools/refresh-baseline.sh, which re-filters defensively for --force
+# runs; change one and change the other. tests/hooks.test.mjs asserts the two agree.
 case "$REL_PATH" in
   .claude/engineering-baseline.md|.claude/engineering-baseline.json|.claude/rules/*|.claude/verify.sh|.claude/verify-on-stop|.claude/baseline-refresh-on-stop|graft/*|node_modules/*|dist/*|build/*|coverage/*)
     exit 0

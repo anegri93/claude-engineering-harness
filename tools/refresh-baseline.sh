@@ -76,7 +76,10 @@ if [[ -z "$CHANGED_FILES" ]]; then
   exit 0
 fi
 
-# Ignore a task whose only edits were harness-generated files.
+# Ignore a task whose only edits were harness-generated files. The PostToolUse hook already
+# filters these out; this is the defensive re-filter for --force runs, where the changed set
+# comes from git instead. It mirrors the `case` list in src/hooks/mark-baseline-dirty.sh —
+# change one and change the other. tests/hooks.test.mjs asserts the two agree.
 RELEVANT_FILES="$(printf '%s\n' "$CHANGED_FILES" | grep -Ev '^(\.claude/(engineering-baseline\.(md|json)|rules/|verify\.sh|verify-on-stop|baseline-refresh-on-stop)|graft/|node_modules/|dist/|build/|coverage/)' || true)"
 if [[ -z "$RELEVANT_FILES" ]]; then
   rm -f "$DIRTY_FILE" "$CHANGED_FILE"
