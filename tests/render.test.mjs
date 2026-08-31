@@ -179,8 +179,8 @@ test('the initial baseline seeds a finding-id counter above the highest id', t =
   const rendered = renderAnalysis(dir, {
     ...MINIMAL_ANALYSIS,
     risks: [
-      { severity: 'high', title: 'One', detail: 'd', evidence_paths: ['a.ts'], recommendation: 'r' },
-      { severity: 'low', title: 'Two', detail: 'd', evidence_paths: ['b.ts'], recommendation: 'r' }
+      { impact: 'security', trigger: 'normal_use', blast_radius: 'component', title: 'One', detail: 'd', evidence_paths: ['a.ts'], recommendation: 'r' },
+      { impact: 'maintenance', trigger: 'specific_conditions', blast_radius: 'component', title: 'Two', detail: 'd', evidence_paths: ['b.ts'], recommendation: 'r' }
     ]
   })
   const state = rendered.state()
@@ -209,7 +209,7 @@ test('a review updates its finding in place and keeps the id', t => {
     finding_reviews: [{
       finding_id: 'F002',
       status: 'resolved',
-      severity: 'low',
+      impact: 'maintenance', trigger: 'specific_conditions', blast_radius: 'component',
       title: 'Finding F002',
       detail: 'detail',
       evidence_paths: ['src/a.ts'],
@@ -227,7 +227,7 @@ test('a new finding takes the next id above the current maximum', t => {
   const dir = workspace(t)
   const current = { version: 2, findings: [finding('F001', 'high'), finding('F007', 'low')] }
   const { state } = renderRefresh(dir, current, {
-    new_findings: [{ severity: 'medium', title: 'Brand new', detail: 'd', evidence_paths: ['src/b.ts'], recommendation: 'r' }]
+    new_findings: [{ impact: 'incorrect_result', trigger: 'specific_conditions', blast_radius: 'component', title: 'Brand new', detail: 'd', evidence_paths: ['src/b.ts'], recommendation: 'r' }]
   })
   assert.deepEqual(state.findings.map(f => f.id), ['F001', 'F007', 'F008'])
   assert.equal(state.next_finding_id, 9)
@@ -241,8 +241,8 @@ test('a new finding whose title only differs in punctuation is not appended twic
   }
   const { state, result } = renderRefresh(dir, current, {
     new_findings: [
-      { severity: 'high', title: 'Health endpoint returns 200, while degraded.', detail: 'd', evidence_paths: [], recommendation: 'r' },
-      { severity: 'high', title: 'Health endpoint returns 200, while degraded.', detail: 'd', evidence_paths: [], recommendation: 'r' }
+      { impact: 'security', trigger: 'normal_use', blast_radius: 'component', title: 'Health endpoint returns 200, while degraded.', detail: 'd', evidence_paths: [], recommendation: 'r' },
+      { impact: 'security', trigger: 'normal_use', blast_radius: 'component', title: 'Health endpoint returns 200, while degraded.', detail: 'd', evidence_paths: [], recommendation: 'r' }
     ]
   })
   assert.equal(result.added, 0)
@@ -289,7 +289,7 @@ test('a pruned id is never handed to a different finding later', t => {
   assert.equal(first.state.next_finding_id, 26)
 
   const second = renderRefresh(dir, first.state, {
-    new_findings: [{ severity: 'critical', title: 'Later finding', detail: 'd', evidence_paths: [], recommendation: 'r' }]
+    new_findings: [{ impact: 'data_loss', trigger: 'normal_use', blast_radius: 'component', title: 'Later finding', detail: 'd', evidence_paths: [], recommendation: 'r' }]
   }, 'second')
   const added = second.state.findings.find(f => f.title === 'Later finding')
   assert.equal(added.id, 'F026', 'a new finding reused an id freed by pruning')
@@ -300,7 +300,7 @@ test('an escaping evidence path in a refresh never reaches the rendered baseline
   const current = { version: 2, findings: [finding('F001', 'high')] }
   const { markdown } = renderRefresh(dir, current, {
     new_findings: [{
-      severity: 'high',
+      impact: 'security', trigger: 'normal_use', blast_radius: 'component',
       title: 'Traversal',
       detail: 'd',
       evidence_paths: ['../../etc/passwd', '/etc/shadow', 'src/ok.ts'],
@@ -487,4 +487,126 @@ test('with no existing rules on disk the model name is used unchanged', t => {
     rule_groups: [{ title: 'Data', filename: 'data-layer', paths: ['lib/**'], rules: ['One.'] }]
   })
   assert.deepEqual(harnessRules(r), ['harness-data-layer.md'])
+})
+
+// --- computed severity -------------------------------------------------------------
+// Severity used to be whatever the model called it, with no written scale anywhere. These pin the
+// half tools/severity.mjs cannot: that the renderers actually derive the rating instead of
+// forwarding one, and that a finding nobody measured is not quietly filed as mild.
+
+test('the refresh rates a finding from its axes and ignores a severity the model supplied', t => {
+  const dir = workspace(t)
+  const { state, markdown } = renderRefresh(dir, { version: 2, findings: [] }, {
+    new_findings: [{
+      severity: 'low',
+      impact: 'data_loss', trigger: 'normal_use', blast_radius: 'component',
+      title: 'Torn write', detail: 'd', evidence_paths: ['src/a.ts'], recommendation: 'r'
+    }]
+  })
+  const added = state.findings.find(f => f.title === 'Torn write')
+  assert.equal(added.severity, 'critical', 'the model-supplied severity was trusted over the axes')
+  assert.match(markdown, /CRITICAL — Torn write/)
+})
+
+test('the rendered finding shows the axes its rating came from', t => {
+  const dir = workspace(t)
+  const { markdown } = renderRefresh(dir, { version: 2, findings: [] }, {
+    new_findings: [{
+      impact: 'security', trigger: 'specific_conditions', blast_radius: 'system_wide',
+      title: 'Consent key collides', detail: 'd', evidence_paths: [], recommendation: 'r'
+    }]
+  })
+  // A reader who disagrees should be able to argue with the inputs, not just the verdict.
+  assert.match(markdown, /- Rated: security × specific_conditions × system_wide/)
+})
+
+test('a new finding with no axes is recorded as unmeasured, never as low', t => {
+  const dir = workspace(t)
+  const { state, markdown } = renderRefresh(dir, { version: 2, findings: [] }, {
+    new_findings: [{ title: 'Axeless', detail: 'd', evidence_paths: [], recommendation: 'r' }]
+  })
+  const added = state.findings.find(f => f.title === 'Axeless')
+  assert.equal(added.severity, 'unrated')
+  assert.notEqual(added.severity, 'low', 'an unmeasured finding was filed as the mildest level')
+  assert.match(markdown, /NOT MEASURED — Axeless/)
+  assert.match(markdown, /- Rated: not measured/)
+})
+
+// Unlike its neighbours, this one passes against the pre-axes renderer too: `severity` already
+// fell back to the stored value. It is here because the rewrite moved that fallback onto a new
+// path (UNRATED, not an empty string), and losing it would silently downgrade every finding a
+// refresh touches without re-measuring. A preserved invariant, not new coverage.
+test('a review that reports no axes leaves the rating the finding already had', t => {
+  const dir = workspace(t)
+  const current = { version: 2, findings: [finding('F001', 'high')] }
+  const { state } = renderRefresh(dir, current, {
+    finding_reviews: [{
+      finding_id: 'F001', status: 'open', title: 'Finding F001', detail: 'still here',
+      evidence_paths: ['src/a.ts'], recommendation: 'r', resolution: ''
+    }]
+  })
+  assert.equal(state.findings[0].severity, 'high', 'an axeless review downgraded a rated finding')
+})
+
+test('a baseline written before axes existed keeps its ratings and says they were not re-measured', t => {
+  const dir = workspace(t)
+  const current = { version: 2, findings: [finding('F001', 'critical')] }
+  const { state, markdown } = renderRefresh(dir, current, {})
+  assert.equal(state.findings[0].severity, 'critical')
+  assert.match(markdown, /CRITICAL — Finding F001/)
+  assert.match(markdown, /not re-measured/)
+})
+
+test('an accepted finding leaves the active list and is recorded as a decision', t => {
+  const dir = workspace(t)
+  const current = { version: 2, findings: [finding('F001', 'high')] }
+  const { state, markdown } = renderRefresh(dir, current, {
+    finding_reviews: [{
+      finding_id: 'F001', status: 'accepted',
+      impact: 'security', trigger: 'specific_conditions', blast_radius: 'component',
+      title: 'Finding F001', detail: 'documented boundary',
+      evidence_paths: ['src/a.ts'], recommendation: 'r', resolution: 'accepted by the team'
+    }]
+  })
+  assert.equal(state.findings[0].status, 'accepted')
+  // The rating states the risk; the status states the decision. Understating one to express the
+  // other is the category error this status exists to remove.
+  assert.equal(state.findings[0].severity, 'high', 'accepting a risk deflated its rating')
+  assert.match(markdown, /## Accepted risks/)
+  const active = markdown.slice(markdown.indexOf('## Active findings'), markdown.indexOf('## Accepted risks'))
+  assert.doesNotMatch(active, /Finding F001/, 'an accepted finding still nags from the active list')
+})
+
+test('the initial baseline rates from axes and shows them, like every later one', t => {
+  const dir = workspace(t)
+  const { read, state } = renderAnalysis(dir, {
+    ...MINIMAL_ANALYSIS,
+    risks: [{
+      impact: 'security', trigger: 'already_occurring', blast_radius: 'component',
+      title: 'Token logged in plain text', detail: 'd',
+      evidence_paths: ['src/a.ts'], recommendation: 'r'
+    }]
+  })
+  assert.equal(state().findings[0].severity, 'critical')
+  const md = read('engineering-baseline.md')
+  assert.match(md, /CRITICAL — Token logged in plain text/)
+  assert.match(md, /- Rated: security × already_occurring × component/)
+})
+
+test('a review that omits the axes keeps the ones the finding already carried', t => {
+  const dir = workspace(t)
+  const rated = finding('F001', 'high', {
+    impact: 'security', trigger: 'specific_conditions', blast_radius: 'component'
+  })
+  const { state, markdown } = renderRefresh(dir, { version: 2, findings: [rated] }, {
+    finding_reviews: [{
+      finding_id: 'F001', status: 'changed', title: 'Finding F001', detail: 'narrowed',
+      evidence_paths: ['src/a.ts'], recommendation: 'r', resolution: ''
+    }]
+  })
+  assert.equal(state.findings[0].impact, 'security', 'a review without axes erased the ones on record')
+  assert.equal(state.findings[0].severity, 'high')
+  // The failure this catches: a finding rendering a real level beside "not measured".
+  assert.match(markdown, /- Rated: security × specific_conditions × component/)
+  assert.doesNotMatch(markdown, /- Rated: not measured/)
 })

@@ -10,8 +10,10 @@
         "additionalProperties": false,
         "properties": {
           "finding_id": { "type": "string" },
-          "status": { "type": "string", "enum": ["open", "changed", "resolved", "stale"] },
-          "severity": { "type": "string", "enum": ["critical", "high", "medium", "low"] },
+          "status": { "type": "string", "enum": ["open", "changed", "resolved", "stale", "accepted"], "description": "accepted means the risk is real and the project has decided to carry it. Use it instead of understating the axes: severity measures the risk, status records the decision." },
+          "impact": { "type": "string", "enum": ["data_loss", "security", "incorrect_result", "maintenance", "cosmetic"], "description": "What breaks if this goes wrong. data_loss: data destroyed, corrupted, or left inconsistent. security: a trust or authorization boundary is crossed or weakened. incorrect_result: the system returns a wrong answer, or silently skips work it reports having done. maintenance: it works, but is costly or dangerous to change. cosmetic: output, naming or documentation, with no behavioural consequence." },
+          "trigger": { "type": "string", "enum": ["already_occurring", "normal_use", "specific_conditions", "hypothetical"], "description": "What must happen for the HARM to occur, not for the code path to run. already_occurring: observable right now in the tree or at runtime. normal_use: any ordinary use path reaches it. specific_conditions: needs a particular environment, timing or input. hypothetical: no known path today, a latent weakness. Example: an unpinned global install of a package at @latest runs on every initialization, but the harm needs a bad version to be published first, so it is hypothetical rather than already_occurring." },
+          "blast_radius": { "type": "string", "enum": ["system_wide", "component", "local"], "description": "How far the consequence reaches. system_wide: every user, project or session. component: one module or subsystem. local: one file or call site." },
           "title": { "type": "string" },
           "detail": { "type": "string" },
           "evidence_paths": {
@@ -22,7 +24,7 @@
           "recommendation": { "type": "string" },
           "resolution": { "type": "string" }
         },
-        "required": ["finding_id", "status", "severity", "title", "detail", "evidence_paths", "recommendation", "resolution"]
+        "required": ["finding_id", "status", "impact", "trigger", "blast_radius", "title", "detail", "evidence_paths", "recommendation", "resolution"]
       }
     },
     "new_findings": {
@@ -32,7 +34,9 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "severity": { "type": "string", "enum": ["critical", "high", "medium", "low"] },
+          "impact": { "type": "string", "enum": ["data_loss", "security", "incorrect_result", "maintenance", "cosmetic"], "description": "What breaks if this goes wrong. data_loss: data destroyed, corrupted, or left inconsistent. security: a trust or authorization boundary is crossed or weakened. incorrect_result: the system returns a wrong answer, or silently skips work it reports having done. maintenance: it works, but is costly or dangerous to change. cosmetic: output, naming or documentation, with no behavioural consequence." },
+          "trigger": { "type": "string", "enum": ["already_occurring", "normal_use", "specific_conditions", "hypothetical"], "description": "What must happen for the HARM to occur, not for the code path to run. already_occurring: observable right now in the tree or at runtime. normal_use: any ordinary use path reaches it. specific_conditions: needs a particular environment, timing or input. hypothetical: no known path today, a latent weakness. Example: an unpinned global install of a package at @latest runs on every initialization, but the harm needs a bad version to be published first, so it is hypothetical rather than already_occurring." },
+          "blast_radius": { "type": "string", "enum": ["system_wide", "component", "local"], "description": "How far the consequence reaches. system_wide: every user, project or session. component: one module or subsystem. local: one file or call site." },
           "title": { "type": "string" },
           "detail": { "type": "string" },
           "evidence_paths": {
@@ -42,7 +46,7 @@
           },
           "recommendation": { "type": "string" }
         },
-        "required": ["severity", "title", "detail", "evidence_paths", "recommendation"]
+        "required": ["impact", "trigger", "blast_radius", "title", "detail", "evidence_paths", "recommendation"]
       }
     },
     "full_reanalysis_recommended": { "type": "boolean" },

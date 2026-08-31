@@ -38,8 +38,23 @@ Ignore generated output, vendored dependencies, caches, build artifacts, coverag
 - Use path-scoped rule groups whenever a rule only matters to one area of the repository.
 - Path patterns must be repository-relative globs. Never emit absolute paths or paths containing `..`.
 - Evidence paths must be repository-relative and point to files or directories you actually inspected.
-- Findings should be concrete. It is valid to return no critical risks.
+- Findings should be concrete. Report the axes honestly; it is normal for a repository to have no finding that computes to critical.
 - Do not manufacture issues just to populate the review.
+
+## Rating a finding
+
+Do not rate a finding. Report three facts about it and the harness computes the rating, so the
+same finding gets the same level on every run and two projects' ratings mean the same thing.
+
+- `impact` — what breaks if this goes wrong.
+- `trigger` — what must happen for the **harm** to occur, not for the code path to run. A global
+  install of a package at `@latest` runs every time, but the harm needs a bad version to be
+  published first: that is `hypothetical`, not `already_occurring`. Getting this backwards inflates
+  every finding in the report.
+- `blast_radius` — how far the consequence reaches.
+
+The schema defines each value. Choose the one the evidence supports; do not pick a harsher value to
+signal that a finding matters, or a milder one to signal that it is tolerated.
 
 ## Desired harness behavior
 
@@ -75,7 +90,7 @@ and leaves nothing in the diff to read.
 - `always_on_rules`: at most 12 repository-specific instructions that truly apply across the project.
 - `business_invariants`: only invariants clearly evidenced by code or documentation.
 - `rule_groups`: 2 to 8 focused rule groups. Use an empty paths list only when the entire repository should load the rule.
-- `risks`: at most 10 concrete production, security, correctness, or maintainability risks with evidence and an incremental recommendation.
+- `risks`: at most 10 concrete production, security, correctness, or maintainability risks with evidence, an incremental recommendation, and the three rating axes described above.
 - `confidence_notes`: ambiguities, incomplete areas, or conclusions that could not be verified.
 
 Do not include secrets, credentials, tokens, personal data values, or copied sensitive payloads in the output.

@@ -402,7 +402,7 @@ durante meses que cierto archivo de tests verificaba algo, mientras el archivo n
 
 Por eso la suite testea los scripts como subprocesos reales contra un `HOME` descartable, porque el
 riesgo que cargan es lo que le hacen a un archivo de configuración real en un disco real.
-**121 tests en 12 archivos**, sin dependencias, sin nada más que Node 20+:
+**141 tests en 13 archivos**, sin dependencias, sin nada más que Node 20+:
 
 ```bash
 node --test tests/*.test.mjs
@@ -667,6 +667,8 @@ stateDiagram-v2
     OPEN --> RESOLVED: el código y los tests actuales lo muestran arreglado
     OPEN --> STALE: la afirmación vieja ya no se sostiene
     CHANGED --> STALE: la afirmación vieja ya no se sostiene
+    OPEN --> ACCEPTED: el riesgo es real y el proyecto decidió cargarlo
+    CHANGED --> ACCEPTED: el riesgo es real y el proyecto decidió cargarlo
     RESOLVED --> [*]: se descarta cuando la retención se llena
     STALE --> [*]: se descarta cuando la retención se llena
 ```
@@ -678,6 +680,31 @@ Antes
 Después de un fix verificado
 [RESOLVED] HIGH — El endpoint de health devuelve 200 estando degradado · F001
 ```
+
+### La calificación se calcula, no se pide
+
+El modelo no elige `CRITICAL` ni `LOW`. Reporta tres hechos y el harness deriva el nivel de una
+tabla, así el mismo hallazgo califica igual en cada corrida y la calificación de dos proyectos
+significa lo mismo.
+
+| Eje | Valores |
+|---|---|
+| `impact` | `data_loss` · `security` · `incorrect_result` · `maintenance` · `cosmetic` |
+| `trigger` | `already_occurring` · `normal_use` · `specific_conditions` · `hypothetical` |
+| `blast_radius` | `system_wide` (sube un nivel) · `component` · `local` (baja uno) |
+
+`trigger` habla del daño, no del code path: una instalación global con `@latest` corre siempre,
+pero el daño necesita que se publique una versión mala, así que es `hypothetical`. Solo la tabla
+produce un `critical`; el modificador de alcance nunca puede crear uno, o un harness que es
+system-wide por naturaleza inflaría al nivel máximo cada riesgo latente que tiene.
+
+Cada hallazgo renderizado lleva los ejes con los que se calificó, así podés discutir con los datos
+en vez de con el veredicto, y un hallazgo cuyos ejes nunca llegaron dice `NOT MEASURED`, no `LOW`.
+
+`ACCEPTED` existe para que un riesgo que decidiste cargar quede registrado como decisión, en lugar
+de expresarse desinflando los ejes en silencio. La calificación dice el riesgo; el estado dice la
+decisión.
+
 
 La identidad es el punto. Los hallazgos viven en un JSON al lado del Markdown justamente para que
 `F001` siga siendo `F001` entre refreshes, en vez de reescribirse como un hallazgo nuevo cada vez
@@ -746,7 +773,7 @@ src/
 
 project-template/              CLAUDE.md · verify.sh · preflight.sh · regla de arquitectura
 tools/                         init-project.sh · refresh-baseline.sh · renderers · I/O de settings
-tests/                         121 tests, node:test, sin dependencias
+tests/                         141 tests, node:test, sin dependencias
 ```
 
 `src/`, `project-template/` y `tools/` son el payload instalable. Tanto `install.sh` como

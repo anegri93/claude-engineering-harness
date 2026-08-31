@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs'
 import path from 'node:path'
+import { severityOf, resolveSeverity, severityRank, severityLabel, UNRATED } from './severity.mjs'
 
 function parseArgs(argv) {
   const out = {}
@@ -35,15 +36,17 @@ function titleKey(v) { return text(v).toLowerCase().replace(/[^a-z0-9]+/g,' ').t
 // oldest-first within a severity so the visible set stays stable between refreshes.
 const MAX_ACTIVE_FINDINGS = 20
 const MAX_ARCHIVED_FINDINGS = 15
-const SEVERITY_RANK = { critical: 0, high: 1, medium: 2, low: 3 }
-const severityRank = f => SEVERITY_RANK[text(f.severity)] ?? 9
-const isArchived = f => ['resolved','stale'].includes(text(f.status))
+// `accepted` is archived, not active: the risk is real and the project decided to carry it, so it
+// stays on the record without nagging from the section that asks for action every session.
+const ARCHIVED_STATUSES = ['resolved','stale','accepted']
+const findingRank = f => severityRank(resolveSeverity(f).severity)
+const isArchived = f => ARCHIVED_STATUSES.includes(text(f.status))
 
 function capFindings(findings, max) {
   if (findings.length <= max) return { kept: findings, dropped: 0 }
   const keep = new Set(findings
     .map((f, index) => ({ f, index }))
-    .sort((a, b) => severityRank(a.f) - severityRank(b.f) || a.index - b.index)
+    .sort((a, b) => findingRank(a.f) - findingRank(b.f) || a.index - b.index)
     .slice(0, max)
     .map(x => x.index))
   return { kept: findings.filter((_, i) => keep.has(i)), dropped: findings.length - max }
@@ -68,10 +71,23 @@ for(const review of Array.isArray(refresh.finding_reviews) ? refresh.finding_rev
   const id=text(review?.finding_id)
   const target=byId.get(id)
   if(!target) continue
+  // A review that reports no axes is revisiting a finding without re-measuring it, so the axes it
+  // already carried stand. Overwriting them with empty strings would leave the finding showing a
+  // real level beside "not measured", which is the kind of half-degraded artifact that reads as
+  // grounded.
+  const axes={
+    impact:text(review?.impact)||text(target.impact),
+    trigger:text(review?.trigger)||text(target.trigger),
+    blast_radius:text(review?.blast_radius)||text(target.blast_radius),
+  }
+  const rated=severityOf(axes)
   const next={
     ...target,
     status:text(review?.status)||target.status||'open',
-    severity:text(review?.severity)||target.severity||'low',
+    ...axes,
+    // Derived, never taken from the model. An unmeasurable review leaves the finding on the rating
+    // it already had rather than silently dropping to the mildest level.
+    severity:rated!==UNRATED ? rated : (text(target.severity)||UNRATED),
     title:text(review?.title)||target.title||'Finding',
     detail:text(review?.detail)||target.detail||'',
     evidence_paths:list(review?.evidence_paths,10).map(safePath).filter(Boolean),
@@ -101,7 +117,10 @@ for(const nf of Array.isArray(refresh.new_findings) ? refresh.new_findings : [])
   const finding={
     id:`F${String(nextId).padStart(3,'0')}`,
     status:'new',
-    severity:text(nf?.severity)||'low',
+    impact:text(nf?.impact),
+    trigger:text(nf?.trigger),
+    blast_radius:text(nf?.blast_radius),
+    severity:severityOf(nf),
     title,
     detail:text(nf?.detail),
     evidence_paths:list(nf?.evidence_paths,10).map(safePath).filter(Boolean),
@@ -147,12 +166,16 @@ const hasChanged=JSON.stringify(semanticState(before))!==JSON.stringify(semantic
 
 function renderFinding(lines,f) {
   const status=text(f.status).toUpperCase()||'OPEN'
-  const sev=text(f.severity).toUpperCase()||'UNRATED'
-  lines.push(`### [${status}] ${sev} — ${text(f.title)||'Finding'} · ${text(f.id)}`)
+  const {severity,legacy}=resolveSeverity(f)
+  lines.push(`### [${status}] ${severityLabel(severity)} — ${text(f.title)||'Finding'} · ${text(f.id)}`)
   lines.push('')
   if(text(f.detail)) lines.push(text(f.detail))
   lines.push('')
   lines.push(`- Evidence: ${evidence(f.evidence_paths)}`)
+  // Show the axes the rating came from, so a reader can argue with the inputs rather than the verdict.
+  if(text(f.impact)&&text(f.trigger)) lines.push(`- Rated: ${text(f.impact)} × ${text(f.trigger)} × ${text(f.blast_radius)||'component'}`)
+  else if(legacy) lines.push('- Rated: carried over from a baseline written before severity axes existed; not re-measured')
+  else lines.push('- Rated: not measured')
   if(text(f.recommendation)) lines.push(`- Incremental recommendation: ${text(f.recommendation).replace(/\s+/g,' ')}`)
   if(text(f.resolution)) lines.push(`- Resolution note: ${text(f.resolution).replace(/\s+/g,' ')}`)
   lines.push('')
@@ -169,17 +192,22 @@ lines.push('## System','',text(current.system_summary),'','## Architecture','',t
 if(current.full_reanalysis_recommended) {
   lines.push('> **Full harness reanalysis recommended.** ' + (text(current.full_reanalysis_reason)||'Recent changes appear to alter architecture or project-wide rules.'),'')
 }
-const active=current.findings.filter(f=>!['resolved','stale'].includes(text(f.status)))
+const active=current.findings.filter(f=>!ARCHIVED_STATUSES.includes(text(f.status)))
 lines.push('## Active findings','')
 if(active.length) {
-  const order={critical:0,high:1,medium:2,low:3}
-  active.sort((a,b)=>(order[text(a.severity)]??9)-(order[text(b.severity)]??9))
+  active.sort((a,b)=>findingRank(a)-findingRank(b))
   for(const f of active) renderFinding(lines,f)
 } else lines.push('No active engineering findings are currently recorded.','')
 const resolvedFindings=current.findings.filter(f=>text(f.status)==='resolved')
 if(resolvedFindings.length) { lines.push('## Resolved findings',''); for(const f of resolvedFindings) renderFinding(lines,f) }
 const staleFindings=current.findings.filter(f=>text(f.status)==='stale')
 if(staleFindings.length) { lines.push('## Stale findings',''); for(const f of staleFindings) renderFinding(lines,f) }
+const acceptedFindings=current.findings.filter(f=>text(f.status)==='accepted')
+if(acceptedFindings.length) {
+  lines.push('## Accepted risks','')
+  lines.push('Real risks the project has decided to carry. The rating states the risk; the status states the decision.','')
+  for(const f of acceptedFindings) renderFinding(lines,f)
+}
 const invariants=Array.isArray(current.business_invariants)?current.business_invariants:[]
 if(invariants.length) {
   lines.push('## Evidenced business invariants','')

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs'
 import path from 'node:path'
+import { severityOf, severityRank, severityLabel } from './severity.mjs'
 
 function parseArgs(argv) {
   const out = {}
@@ -343,8 +344,9 @@ for (let i = 0; i < groups.length; i++) {
   generatedNames.push(filename)
 }
 
-const order = { critical: 0, high: 1, medium: 2, low: 3 }
-risks.sort((a, b) => (order[text(a?.severity)] ?? 9) - (order[text(b?.severity)] ?? 9))
+// Severity is derived from the reported axes, never taken from the model. See tools/severity.mjs
+// for why: an unwritten scale drifts between runs, and the retention cap prunes by it.
+risks.sort((a, b) => severityRank(severityOf(a)) - severityRank(severityOf(b)))
 
 const baselineState = {
   version: 2,
@@ -359,7 +361,10 @@ const baselineState = {
   findings: risks.map((risk, index) => ({
     id: `F${String(index + 1).padStart(3, '0')}`,
     status: 'open',
-    severity: text(risk?.severity) || 'low',
+    impact: text(risk?.impact),
+    trigger: text(risk?.trigger),
+    blast_radius: text(risk?.blast_radius),
+    severity: severityOf(risk),
     title: text(risk?.title) || 'Finding',
     detail: text(risk?.detail),
     evidence_paths: list(risk?.evidence_paths, 8).map(safeRepoPath).filter(Boolean),
@@ -372,7 +377,7 @@ const baselineState = {
 }
 
 function renderFinding(baseline, finding) {
-  const severity = text(finding?.severity).toUpperCase() || 'UNRATED'
+  const severity = severityLabel(finding?.severity)
   const status = text(finding?.status).toUpperCase() || 'OPEN'
   const title = text(finding?.title) || 'Finding'
   baseline.push(`### [${status}] ${severity} — ${title} · ${text(finding?.id)}`)
@@ -380,6 +385,13 @@ function renderFinding(baseline, finding) {
   if (text(finding?.detail)) baseline.push(text(finding.detail))
   baseline.push('')
   baseline.push(`- Evidence: ${evidence(finding?.evidence_paths)}`)
+  // Same line the refresh renderer writes: the initial baseline and every later one are the same
+  // artifact, and a reader should be able to argue with the inputs rather than the verdict.
+  if (text(finding?.impact) && text(finding?.trigger)) {
+    baseline.push(`- Rated: ${text(finding.impact)} × ${text(finding.trigger)} × ${text(finding?.blast_radius) || 'component'}`)
+  } else {
+    baseline.push('- Rated: not measured')
+  }
   if (text(finding?.recommendation)) baseline.push(`- Incremental recommendation: ${text(finding.recommendation).replace(/\s+/g, ' ')}`)
   if (text(finding?.resolution)) baseline.push(`- Resolution note: ${text(finding.resolution).replace(/\s+/g, ' ')}`)
   baseline.push('')

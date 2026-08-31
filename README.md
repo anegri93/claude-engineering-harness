@@ -392,7 +392,7 @@ never ran" rather than "a check that failed". Two shipped comments once claimed 
 asserted something, for months, while the file did not exist.
 
 So the suite tests the scripts as real subprocesses against a throwaway `HOME`, because the risk
-they carry is what they do to a real config file on a real disk. **121 tests across 12 files**, no
+they carry is what they do to a real config file on a real disk. **141 tests across 13 files**, no
 dependencies, nothing but Node 20+ required:
 
 ```bash
@@ -654,6 +654,8 @@ stateDiagram-v2
     OPEN --> RESOLVED: current source and tests show it fixed
     OPEN --> STALE: the old claim is no longer supportable
     CHANGED --> STALE: the old claim is no longer supportable
+    OPEN --> ACCEPTED: the risk is real and the project decided to carry it
+    CHANGED --> ACCEPTED: the risk is real and the project decided to carry it
     RESOLVED --> [*]: dropped when retention fills
     STALE --> [*]: dropped when retention fills
 ```
@@ -665,6 +667,31 @@ Before
 After a verified fix
 [RESOLVED] HIGH — Health endpoint returns 200 while degraded · F001
 ```
+
+### The rating is computed, not asked for
+
+The model does not choose `CRITICAL` or `LOW`. It reports three facts and the harness derives the
+level from a table, so the same finding rates the same way on every run and two projects' ratings
+mean the same thing.
+
+| Axis | Values |
+|---|---|
+| `impact` | `data_loss` · `security` · `incorrect_result` · `maintenance` · `cosmetic` |
+| `trigger` | `already_occurring` · `normal_use` · `specific_conditions` · `hypothetical` |
+| `blast_radius` | `system_wide` (raises one level) · `component` · `local` (lowers one) |
+
+`trigger` is about the harm, not the code path: a global install at `@latest` runs every time, but
+the harm needs a bad version published first, so it is `hypothetical`. Only the table produces a
+`critical`; the blast-radius modifier can never create one, or a harness that is system-wide by
+nature would inflate every latent risk it has to the top level.
+
+Each rendered finding carries the axes it was rated from, so you can argue with the inputs rather
+than the verdict, and a finding whose axes never arrived reads `NOT MEASURED` rather than `LOW`.
+
+`ACCEPTED` exists so that a risk you have decided to carry is recorded as a decision instead of
+being expressed by quietly understating the axes. The rating states the risk; the status states the
+decision.
+
 
 The identity is the point. Findings live in a JSON file next to the Markdown precisely so `F001`
 stays `F001` across refreshes, instead of being rewritten as a brand-new finding every time and
@@ -732,7 +759,7 @@ src/
 
 project-template/              CLAUDE.md · verify.sh · preflight.sh · architecture rule
 tools/                         init-project.sh · refresh-baseline.sh · renderers · settings I/O
-tests/                         121 tests, node:test, no dependencies
+tests/                         141 tests, node:test, no dependencies
 ```
 
 `src/`, `project-template/` and `tools/` are the installable payload. Both `install.sh` and
