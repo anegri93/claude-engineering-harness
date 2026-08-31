@@ -392,7 +392,7 @@ never ran" rather than "a check that failed". Two shipped comments once claimed 
 asserted something, for months, while the file did not exist.
 
 So the suite tests the scripts as real subprocesses against a throwaway `HOME`, because the risk
-they carry is what they do to a real config file on a real disk. **141 tests across 13 files**, no
+they carry is what they do to a real config file on a real disk. **175 tests across 14 files**, no
 dependencies, nothing but Node 20+ required:
 
 ```bash
@@ -405,14 +405,16 @@ node --test tests/*.test.mjs
 | `payload.test.mjs` | a file added to any payload directory is really installed *and* really uninstalled, and the stock payload round-trips leaving nothing behind |
 | `settings.test.mjs` | install applies the defaults and both hooks, is idempotent, and leaves unrelated settings and foreign hooks untouched |
 | `hooks.test.mjs` | the PostToolUse case list and the refresh's grep filter agree on every path, and harness bookkeeping is ignored while real source is recorded |
-| `init-project.test.mjs` | the generated `verify.sh` is a usable script, and a project with no usable scripts fails loudly instead of verifying nothing |
-| `render.test.mjs` | the renderers refuse unstructured or incomplete model output, and escaping paths never reach evidence lines |
-| `schemas.test.mjs` | both JSON schemas parse, survive the newline stripping their callers apply, are closed objects, and ask only for keys a renderer actually reads |
+| `init-project.test.mjs` | the generated `verify.sh` is a usable script, an e2e script the repository declares lands in the gate, and a project with no usable scripts fails loudly instead of verifying nothing |
+| `render.test.mjs` | the renderers refuse unstructured or incomplete model output, escaping paths never reach evidence lines, and a re-initialization keeps finding IDs and the decisions recorded against them |
+| `schemas.test.mjs` | both JSON schemas parse, survive the newline stripping their callers apply, are closed objects, ask only for keys a renderer actually reads, and offer no finding status the renderer fails to file |
+| `baseline-refresh-trigger.test.mjs` | an edit made through Bash still reaches the refresh, while a clean tree and an already-analysed dirty tree still cost no model call |
 | `graft-evidence.test.mjs` | a graph that answers nothing is not reported as a successful integration |
 | `stream-progress.test.mjs` | progress goes to stderr only, and a stream that ends without a result event is an error rather than a partial analysis rendered as a complete one |
 | `rules.test.mjs` | every shipped rule is named so uninstall removes it, and every rule declares the paths it applies to |
 | `defaults.test.mjs` | the hand-copied settings snippet applies exactly what the installer does, and claims nothing more |
 | `version.test.mjs` | `VERSION` is the single source of the release string, and no shipped script restates it in prose |
+| `severity.test.mjs` | the severity table is pinned cell by cell, and the carry verdict reads the computed rating rather than a supplied one |
 
 CI runs the suite on Node 20, 22 and 24, on Linux and macOS, lints every shell script with a
 pinned shellcheck, and runs one job under the real `/bin/bash` 3.2 — because the two most recent
@@ -429,6 +431,12 @@ repository-relative paths into `~/.claude/harness-runtime/<project>/`. It calls 
 touches no code. It exists so the refresh knows the blast radius without guessing. It ignores its
 own bookkeeping — edits to the baseline files, to `.claude/rules/`, to `verify.sh`, and to
 `graft/`, `node_modules/`, `dist/`, `build/` and `coverage/` never mark the project dirty.
+
+That record is one of two sources, not the only one. Claude Code does not fire PostToolUse for a
+file written through Bash — a heredoc, `sed -i`, a python one-liner — so a task that edits that way
+leaves the record empty. Git sees those edits, so the refresh reads both and analyses whichever is
+non-empty. A working tree that stays dirty across turns is fingerprinted after the ignore filter,
+so the git source costs nothing when nothing moved.
 
 **The Stop hook** runs verify first and refresh second. Verification failure blocks the task.
 Refresh failure is fail-soft, and the dirty state is kept so the next Stop retries.
@@ -465,6 +473,14 @@ more than the gate is worth — and says so, printing the command to stop it.
 restricted to `Read`, `Glob` and `Grep`. It cannot edit. It is asked for two things and nothing
 else: revalidate findings the change could plausibly have affected, and flag concrete new risks
 inside the blast radius.
+
+Both the refresh and the initial analysis run with your repository as their working directory, so
+neither can see `~/.claude` — which is where every harness hook, marker and setting actually lives.
+Whether the harness is installed or running is therefore out of scope for them, and both prompts
+say so. Absent `.claude/verify-on-stop` markers in particular are not evidence of anything: the
+harness removes them on purpose, because an in-repo marker let a clone grant itself permission to
+run its own `verify.sh`. `.claude/verify.sh` and `.claude/preflight.sh` remain fair game for what
+they do, or fail to do, for your repository.
 
 Every scripted model call the harness makes is read-only and non-persistent:
 `--safe-mode --tools "Read,Glob,Grep" --disallowedTools "mcp__*" --permission-mode dontAsk
@@ -569,7 +585,7 @@ run, and a later `git pull` can change it. That is the same trust you extend to 
 
 | Detected | What the generated script runs |
 |---|---|
-| `package.json` | Your real scripts, through the package manager from your lockfile. A pnpm monorepo falls back to `pnpm -r --if-present run` over lint, typecheck, test and build. |
+| `package.json` | Your real scripts, through the package manager from your lockfile. A pnpm monorepo falls back to `pnpm -r --if-present run` over lint, typecheck, test, build and the e2e scripts. |
 | Python | `ruff check`, `mypy`, `pytest` — whichever are installed. |
 | `go.mod` | `go vet ./...`, `go test ./...` |
 | `Cargo.toml` | `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test` |
@@ -594,7 +610,8 @@ format:check    formatting, alternate script name
 lint            static analysis
 typecheck       falls back to test:types
 test            your suite
-build           last, most expensive
+build           most expensive
+test:e2e        your end-to-end suite, last: it usually needs the build
 ```
 
 Every one of those is skipped when `package.json` has no such script. Nothing is invented and
@@ -657,9 +674,23 @@ stateDiagram-v2
     CHANGED --> STALE: the old claim is no longer supportable
     OPEN --> ACCEPTED: the risk is real and the project decided to carry it
     CHANGED --> ACCEPTED: the risk is real and the project decided to carry it
+    OPEN --> INVALID: the claim was never true of this repository
+    CHANGED --> INVALID: the claim was never true of this repository
     RESOLVED --> [*]: dropped when retention fills
     STALE --> [*]: dropped when retention fills
 ```
+
+`INVALID` is the one that closes a false positive. `RESOLVED` means it was true and got fixed;
+`STALE` means it was true and the ground moved; `ACCEPTED` means it is true and the project decided
+to carry it. Without a fourth word, a finding the analysis simply got wrong had nowhere to go but
+open, forever — and a finding list nobody can correct is a finding list nobody reads. A withdrawn
+finding is kept rather than deleted, with what the original claim got wrong, so a later analysis
+does not file the same false positive again.
+
+Stable IDs survive a full re-initialization, not only a refresh. A finding is matched to the
+previous baseline by title and keeps its number, new ones come from a persisted counter so a number
+the retention cap retired is never handed to a different finding, and `ACCEPTED` and `INVALID`
+outlive the rerun — they record a judgement no analysis can re-derive from reading the source.
 
 ```text
 Before
@@ -795,7 +826,7 @@ src/
 
 project-template/              CLAUDE.md · verify.sh · preflight.sh · architecture rule
 tools/                         init-project.sh · refresh-baseline.sh · renderers · settings I/O
-tests/                         141 tests, node:test, no dependencies
+tests/                         175 tests, node:test, no dependencies
 ```
 
 `src/`, `project-template/` and `tools/` are the installable payload. Both `install.sh` and

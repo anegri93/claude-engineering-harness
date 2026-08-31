@@ -159,12 +159,53 @@ function sameScope(a, b) {
   return true
 }
 
+// Re-initialization used to number findings from scratch, so every rerun renamed all of them and
+// discarded whatever a person had decided about them. That is why one repository shipped a source
+// comment pointing at "(F004)" for a finding the baseline by then called F001. Identity survives a
+// rerun by title, allocation runs off the persisted counter so a retired number is never reused,
+// and the two statuses a person or a verification set — `accepted` and `invalid` — outlive an
+// analysis that has no way to know they were decided.
+//
+// Same normalization as tools/render-baseline-refresh.mjs, deliberately: the two renderers must
+// agree on when two findings are the same finding.
+function titleKey(value) {
+  return text(value).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+}
+
+// Statuses an analysis cannot re-derive from source, because they record a judgement rather than
+// an observation. A rerun that reports the same title inherits them instead of reopening the case.
+const DECIDED_STATUSES = ['accepted', 'invalid']
+
+function readPriorBaseline(baselinePath) {
+  const empty = { byTitle: new Map(), nextId: 1 }
+  if (!baselinePath || !fs.existsSync(baselinePath)) return empty
+  let parsed
+  try {
+    parsed = JSON.parse(fs.readFileSync(baselinePath, 'utf8'))
+  } catch {
+    // A corrupt or hand-mangled baseline must not abort initialization: the analysis is still
+    // valid, it just cannot inherit identity. Falling back to fresh numbering is the safe half.
+    return empty
+  }
+  const findings = Array.isArray(parsed?.findings) ? parsed.findings : []
+  const byTitle = new Map()
+  let maxId = 0
+  for (const finding of findings) {
+    const id = /^F(\d+)$/.exec(text(finding?.id))
+    if (id) maxId = Math.max(maxId, Number(id[1]))
+    const key = titleKey(finding?.title)
+    if (key && !byTitle.has(key)) byTitle.set(key, finding)
+  }
+  return { byTitle, nextId: Math.max(Number(parsed?.next_finding_id) || 0, maxId + 1) }
+}
+
 const args = parseArgs(process.argv)
 const inputPath = requireArg(args, 'input')
 const outDir = requireArg(args, 'out')
 const projectName = requireArg(args, 'name')
 const existing = existingRules(args['existing-rules'])
 const claimedExisting = new Set()
+const priorBaseline = readPriorBaseline(args['existing-baseline'])
 const kind = args.kind || 'Unknown'
 const stack = args.stack || 'Unknown'
 const packageManager = args['package-manager'] || 'Not detected'
@@ -348,6 +389,55 @@ for (let i = 0; i < groups.length; i++) {
 // for why: an unwritten scale drifts between runs, and the retention cap prunes by it.
 risks.sort((a, b) => severityRank(severityOf(a)) - severityRank(severityOf(b)))
 
+let nextFindingId = priorBaseline.nextId
+const reportedKeys = new Set()
+
+function renderedFinding(risk) {
+  const title = text(risk?.title) || 'Finding'
+  const key = titleKey(title)
+  const prior = key ? priorBaseline.byTitle.get(key) : undefined
+  if (key) reportedKeys.add(key)
+  let id
+  if (prior && /^F\d+$/.test(text(prior.id))) {
+    id = text(prior.id)
+  } else {
+    id = `F${String(nextFindingId).padStart(3, '0')}`
+    nextFindingId += 1
+  }
+  const decided = prior && DECIDED_STATUSES.includes(text(prior.status))
+  return {
+    id,
+    status: decided ? text(prior.status) : 'open',
+    impact: text(risk?.impact),
+    trigger: text(risk?.trigger),
+    blast_radius: text(risk?.blast_radius),
+    fix_cost: text(risk?.fix_cost),
+    severity: severityOf(risk),
+    title,
+    detail: text(risk?.detail),
+    example: text(risk?.example),
+    evidence_paths: list(risk?.evidence_paths, 8).map(safeRepoPath).filter(Boolean),
+    recommendation: text(risk?.recommendation),
+    resolution: decided ? text(prior.resolution) : '',
+  }
+}
+
+const renderedFindings = risks.map(renderedFinding)
+
+// A decided finding the new analysis did not re-report is carried over rather than dropped. An
+// `invalid` one especially: it exists to stop the same false positive being filed a third time,
+// and deleting it would hand that job back to nobody. The refresh renderer's retention cap prunes
+// this set later, so nothing needs a second cap here.
+for (const [key, prior] of priorBaseline.byTitle) {
+  if (reportedKeys.has(key)) continue
+  if (!DECIDED_STATUSES.includes(text(prior.status))) continue
+  renderedFindings.push({
+    ...prior,
+    id: text(prior.id) || `F${String(nextFindingId++).padStart(3, '0')}`,
+    evidence_paths: list(prior?.evidence_paths, 8).map(safeRepoPath).filter(Boolean),
+  })
+}
+
 const baselineState = {
   version: 2,
   system_summary: summary,
@@ -358,22 +448,8 @@ const baselineState = {
     evidence_paths: list(item?.evidence_paths, 8).map(safeRepoPath).filter(Boolean),
   })).filter((item) => item.rule),
   confidence_notes: confidenceNotes,
-  findings: risks.map((risk, index) => ({
-    id: `F${String(index + 1).padStart(3, '0')}`,
-    status: 'open',
-    impact: text(risk?.impact),
-    trigger: text(risk?.trigger),
-    blast_radius: text(risk?.blast_radius),
-    fix_cost: text(risk?.fix_cost),
-    severity: severityOf(risk),
-    title: text(risk?.title) || 'Finding',
-    detail: text(risk?.detail),
-    example: text(risk?.example),
-    evidence_paths: list(risk?.evidence_paths, 8).map(safeRepoPath).filter(Boolean),
-    recommendation: text(risk?.recommendation),
-    resolution: '',
-  })),
-  next_finding_id: risks.length + 1,
+  findings: renderedFindings,
+  next_finding_id: nextFindingId,
   full_reanalysis_recommended: false,
   full_reanalysis_reason: '',
 }
@@ -426,7 +502,7 @@ baseline.push('')
 // but costs more to remove than the harm it carries is filed here rather than dropped: deleting it
 // would make the analysis unreproducible, and leaving it among the actionable ones is what buried
 // them in the first place.
-const unarchived = baselineState.findings.filter((f) => !['resolved', 'stale'].includes(f.status))
+const unarchived = baselineState.findings.filter((f) => !['resolved', 'stale', ...DECIDED_STATUSES].includes(f.status))
 const active = unarchived.filter((f) => verdictOf(f) !== CARRY)
 const carried = unarchived.filter((f) => verdictOf(f) === CARRY)
 
@@ -458,6 +534,27 @@ if (stale.length) {
   baseline.push('## Stale findings')
   baseline.push('')
   for (const finding of stale) renderFinding(baseline, finding)
+}
+
+// Both sections exist because a re-initialization inherits these two statuses rather than
+// reopening what someone already settled. Rendered here so the decision is visible in the
+// artifact, not only in the JSON a person never opens.
+const accepted = baselineState.findings.filter((f) => f.status === 'accepted')
+if (accepted.length) {
+  baseline.push('## Accepted risks')
+  baseline.push('')
+  baseline.push('Real risks the project has decided to carry. The rating states the risk; the status states the decision.')
+  baseline.push('')
+  for (const finding of accepted) renderFinding(baseline, finding)
+}
+
+const invalid = baselineState.findings.filter((f) => f.status === 'invalid')
+if (invalid.length) {
+  baseline.push('## Withdrawn findings')
+  baseline.push('')
+  baseline.push('Reported by an earlier analysis and since shown not to be true of this repository. They are kept, not deleted, so a later analysis does not report them again — read the resolution before reopening one.')
+  baseline.push('')
+  for (const finding of invalid) renderFinding(baseline, finding)
 }
 
 if (baselineState.business_invariants.length) {

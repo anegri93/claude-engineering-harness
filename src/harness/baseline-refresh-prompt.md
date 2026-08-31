@@ -19,6 +19,13 @@ Your job is intentionally incremental. Do not re-audit the entire repository.
 9. A finding is changed when part of the original claim is fixed but a materially different or narrower risk remains.
 10. A finding is stale when its claim cannot be supported anymore and there is not enough evidence to call it a concrete resolved issue.
 11. A finding is accepted when the risk is real and the repository has decided in writing to carry it. Use `accepted` rather than understating the axes: the rating states the risk, the status states the decision.
+12. A finding is invalid when the claim was never true of this repository — the analysis that
+    produced it misread the code, or reasoned from something it could not see. That is different
+    from `resolved` (it was true and got fixed) and from `stale` (it was true and the ground moved).
+    Mark it `invalid` and say in `resolution` what the original claim got wrong; the finding is kept
+    on the record precisely so a later analysis does not report it a third time. Without this the
+    only ways to close a false positive were to hand-edit a generated file or to leave it open
+    forever, and a finding list nobody can correct is a finding list nobody reads.
 
 ## Rating a finding
 
@@ -65,6 +72,12 @@ must describe the code as it stands now, not as it stood when the finding was fi
   of a routine change, not a failure to have looked.
 - Do not propose broad rewrites.
 - Do not revisit unrelated existing findings.
+- Whether the harness itself is installed, enabled or running is outside this repository and
+  outside what you can see: its hooks, its Stop gate and the markers that enable them live under
+  the user's `~/.claude`, which you cannot read. `.claude/verify-on-stop` and
+  `.claude/baseline-refresh-on-stop` are removed from repositories on purpose, so their absence is
+  not evidence of anything. Never report the harness as unwired; if an existing finding claims
+  that, mark it `invalid`.
 - Do not change project architecture rules in this incremental pass.
 - If the changes imply a fundamental architectural shift that should regenerate project rules, set `full_reanalysis_recommended` to true and explain why.
 

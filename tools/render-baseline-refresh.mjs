@@ -42,7 +42,9 @@ const MAX_ARCHIVED_FINDINGS = 15
 const MAX_CARRIED_FINDINGS = 10
 // `accepted` is archived, not active: the risk is real and the project decided to carry it, so it
 // stays on the record without nagging from the section that asks for action every session.
-const ARCHIVED_STATUSES = ['resolved','stale','accepted']
+// `invalid` is archived for a different reason — the claim was never true — and is kept rather
+// than deleted so the title-key dedup below stops a later run from reporting it again.
+const ARCHIVED_STATUSES = ['resolved','stale','accepted','invalid']
 const findingRank = f => severityRank(resolveSeverity(f).severity)
 const isArchived = f => ARCHIVED_STATUSES.includes(text(f.status))
 // A finding the harness decided is not worth the fix is neither active work nor archived history.
@@ -237,6 +239,12 @@ if(acceptedFindings.length) {
   lines.push('## Accepted risks','')
   lines.push('Real risks the project has decided to carry. The rating states the risk; the status states the decision.','')
   for(const f of acceptedFindings) renderFinding(lines,f)
+}
+const invalidFindings=current.findings.filter(f=>text(f.status)==='invalid')
+if(invalidFindings.length) {
+  lines.push('## Withdrawn findings','')
+  lines.push('Reported by an earlier analysis and since shown not to be true of this repository. They are kept, not deleted, so a later analysis does not report them again — read the resolution before reopening one.','')
+  for(const f of invalidFindings) renderFinding(lines,f)
 }
 const invariants=Array.isArray(current.business_invariants)?current.business_invariants:[]
 if(invariants.length) {

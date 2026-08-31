@@ -402,7 +402,7 @@ durante meses que cierto archivo de tests verificaba algo, mientras el archivo n
 
 Por eso la suite testea los scripts como subprocesos reales contra un `HOME` descartable, porque el
 riesgo que cargan es lo que le hacen a un archivo de configuración real en un disco real.
-**141 tests en 13 archivos**, sin dependencias, sin nada más que Node 20+:
+**175 tests en 14 archivos**, sin dependencias, sin nada más que Node 20+:
 
 ```bash
 node --test tests/*.test.mjs
@@ -414,14 +414,16 @@ node --test tests/*.test.mjs
 | `payload.test.mjs` | un archivo agregado a cualquier directorio del payload realmente se instala *y* realmente se desinstala, y el payload de fábrica va y vuelve sin dejar nada |
 | `settings.test.mjs` | install aplica los defaults y los dos hooks, es idempotente, y deja intactos los settings ajenos y los hooks de terceros |
 | `hooks.test.mjs` | la lista de casos del PostToolUse y el filtro grep del refresh coinciden en todos los paths, y la contabilidad interna del harness se ignora mientras el código fuente real se registra |
-| `init-project.test.mjs` | el `verify.sh` generado es un script usable, y un proyecto sin scripts utilizables falla fuerte en vez de verificar nada |
-| `render.test.mjs` | los renderers rechazan salida del modelo sin estructura o incompleta, y los paths con escapes nunca llegan a las líneas de evidencia |
-| `schemas.test.mjs` | los dos JSON Schemas parsean, sobreviven al stripping de saltos de línea que aplican sus llamadores, son objetos cerrados, y solo piden claves que algún renderer realmente lee |
+| `init-project.test.mjs` | el `verify.sh` generado es un script usable, un script e2e que el repositorio declara entra al gate, y un proyecto sin scripts utilizables falla fuerte en vez de verificar nada |
+| `render.test.mjs` | los renderers rechazan salida del modelo sin estructura o incompleta, los paths con escapes nunca llegan a las líneas de evidencia, y una reinicialización conserva los IDs de hallazgo y las decisiones registradas sobre ellos |
+| `schemas.test.mjs` | los dos JSON Schemas parsean, sobreviven al stripping de saltos de línea que aplican sus llamadores, son objetos cerrados, solo piden claves que algún renderer realmente lee, y no ofrecen ningún estado de hallazgo que el renderer no sepa archivar |
+| `baseline-refresh-trigger.test.mjs` | una edición hecha por Bash igual llega al refresh, mientras que un árbol limpio y un árbol sucio ya analizado siguen sin costar una llamada al modelo |
 | `graft-evidence.test.mjs` | un grafo que no responde nada no se reporta como una integración exitosa |
 | `stream-progress.test.mjs` | el progreso va solo a stderr, y un stream que termina sin evento de resultado es un error en vez de un análisis parcial renderizado como completo |
 | `rules.test.mjs` | cada regla publicada está nombrada de forma que uninstall la remueve, y cada regla declara los paths a los que aplica |
 | `defaults.test.mjs` | el snippet de settings para copiar a mano aplica exactamente lo que aplica el instalador, y no promete nada más |
 | `version.test.mjs` | `VERSION` es la única fuente del número de release, y ningún script publicado lo repite en prosa |
+| `severity.test.mjs` | la tabla de severidad está fijada celda por celda, y el veredicto de "carried" lee la calificación computada y no una provista |
 
 CI corre la suite en Node 20, 22 y 24, en Linux y macOS, lintea cada script de shell con un
 shellcheck pineado, y corre un job bajo el `/bin/bash` 3.2 real — porque las dos regresiones de
@@ -439,6 +441,12 @@ relativos al repositorio en `~/.claude/harness-runtime/<proyecto>/`. No llama al
 código. Existe para que el refresh sepa el radio de impacto sin adivinar. Ignora su propia
 contabilidad: ediciones a los archivos de línea base, a `.claude/rules/`, a `verify.sh`, y a
 `graft/`, `node_modules/`, `dist/`, `build/` y `coverage/` nunca marcan el proyecto como sucio.
+
+Ese registro es una de dos fuentes, no la única. Claude Code no dispara PostToolUse cuando un
+archivo se escribe por Bash — un heredoc, `sed -i`, un one-liner de python — así que una tarea que
+edita así lo deja vacío. Git sí ve esas ediciones, por eso el refresh lee las dos fuentes y analiza
+la que tenga contenido. Un árbol de trabajo que queda sucio entre turnos se identifica por huella
+después del filtro de ignorados, así que la fuente git no cuesta nada cuando nada se movió.
 
 **El hook Stop** corre primero verify y después refresh. Una verificación fallida bloquea la
 tarea. Un refresh fallido es fail-soft, y el estado sucio se conserva para que el próximo Stop
@@ -476,6 +484,15 @@ costaría mucho más de lo que vale el gate — y lo dice, imprimiendo el comand
 Graft, restringido a `Read`, `Glob` y `Grep`. No puede editar. Se le piden dos cosas y nada más:
 revalidar los hallazgos que el cambio pudo plausiblemente afectar, y señalar riesgos nuevos
 concretos dentro del radio de impacto.
+
+Tanto el refresh como el análisis inicial corren con tu repositorio como directorio de trabajo, así
+que ninguno de los dos puede ver `~/.claude` — que es donde viven de verdad todos los hooks,
+marcadores y settings del harness. Si el harness está instalado o corriendo queda entonces fuera de
+alcance para ellos, y los dos prompts lo dicen. La ausencia de los marcadores `.claude/verify-on-stop`
+en particular no es evidencia de nada: el harness los borra a propósito, porque un marcador dentro
+del repo dejaba que un clon se autorizara a sí mismo a correr su propio `verify.sh`.
+`.claude/verify.sh` y `.claude/preflight.sh` siguen siendo terreno válido por lo que hacen, o dejan
+de hacer, para tu repositorio.
 
 Cada llamada al modelo que el harness hace por script es de solo lectura y no persistente:
 `--safe-mode --tools "Read,Glob,Grep" --disallowedTools "mcp__*" --permission-mode dontAsk
@@ -579,7 +596,7 @@ vos, y un `git pull` posterior puede cambiarlo. Es la misma confianza que le ext
 
 | Detectado | Qué corre el script generado |
 |---|---|
-| `package.json` | Tus scripts reales, con el gestor de paquetes que indica tu lockfile. Un monorepo pnpm cae a `pnpm -r --if-present run` sobre lint, typecheck, test y build. |
+| `package.json` | Tus scripts reales, con el gestor de paquetes que indica tu lockfile. Un monorepo pnpm cae a `pnpm -r --if-present run` sobre lint, typecheck, test, build y los scripts e2e. |
 | Python | `ruff check`, `mypy`, `pytest` — los que estén instalados. |
 | `go.mod` | `go vet ./...`, `go test ./...` |
 | `Cargo.toml` | `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test` |
@@ -605,7 +622,8 @@ format:check    formato, nombre alternativo del script
 lint            análisis estático
 typecheck       cae a test:types
 test            tu suite
-build           último, el más caro
+build           el más caro
+test:e2e        tu suite end-to-end, última: casi siempre necesita el build
 ```
 
 Cada uno se saltea si `package.json` no tiene ese script. No se inventa nada y no se adivina nada.
@@ -670,9 +688,24 @@ stateDiagram-v2
     CHANGED --> STALE: la afirmación vieja ya no se sostiene
     OPEN --> ACCEPTED: el riesgo es real y el proyecto decidió cargarlo
     CHANGED --> ACCEPTED: el riesgo es real y el proyecto decidió cargarlo
+    OPEN --> INVALID: la afirmación nunca fue cierta en este repositorio
+    CHANGED --> INVALID: la afirmación nunca fue cierta en este repositorio
     RESOLVED --> [*]: se descarta cuando la retención se llena
     STALE --> [*]: se descarta cuando la retención se llena
 ```
+
+`INVALID` es el que cierra un falso positivo. `RESOLVED` significa que era cierto y se arregló;
+`STALE`, que era cierto y el terreno se movió; `ACCEPTED`, que es cierto y el proyecto decidió
+cargarlo. Sin una cuarta palabra, un hallazgo que el análisis simplemente erró no tenía a dónde ir
+más que quedarse abierto para siempre — y una lista de hallazgos que nadie puede corregir es una
+lista que nadie lee. Un hallazgo retirado se conserva en vez de borrarse, con qué erró la
+afirmación original, para que un análisis posterior no vuelva a presentar el mismo falso positivo.
+
+Los IDs estables sobreviven una reinicialización completa, no solo un refresh. Un hallazgo se
+empareja con la línea base anterior por título y conserva su número, los nuevos salen de un contador
+persistido para que un número que la retención retiró nunca se le entregue a otro hallazgo, y
+`ACCEPTED` e `INVALID` sobreviven la corrida: registran un juicio que ningún análisis puede volver a
+derivar leyendo el código.
 
 ```text
 Antes
@@ -810,7 +843,7 @@ src/
 
 project-template/              CLAUDE.md · verify.sh · preflight.sh · regla de arquitectura
 tools/                         init-project.sh · refresh-baseline.sh · renderers · I/O de settings
-tests/                         141 tests, node:test, sin dependencias
+tests/                         175 tests, node:test, sin dependencias
 ```
 
 `src/`, `project-template/` y `tools/` son el payload instalable. Tanto `install.sh` como

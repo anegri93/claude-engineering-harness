@@ -381,6 +381,14 @@ if [[ -f package.json && -n "$RUN_PREFIX" ]]; then
     fi
     has_script_name "test" && VERIFY_SCRIPTS+=("test")
     has_script_name "build" && VERIFY_SCRIPTS+=("build")
+    # End-to-end suites were never candidates, so a repository could keep its whole integration
+    # layer outside the gate without anything saying so: one project ran a session with 42 of 54
+    # e2e suites red and the Stop gate stayed green throughout, and a flake that had been live in
+    # those suites for months was structurally invisible to it. Last because it is the slowest
+    # step and usually the one that needs the build, so the cheap checks still fail first.
+    for candidate in "test:e2e" "e2e"; do
+      has_script_name "$candidate" && VERIFY_SCRIPTS+=("$candidate")
+    done
   fi
 fi
 
@@ -733,6 +741,7 @@ if [[ "$AI_ANALYSIS" == true ]]; then
     --input "$AI_RESPONSE_FILE" \
     --out "$STAGE_DIR" \
     --existing-rules "$PROJECT_DIR/.claude/rules" \
+    --existing-baseline "$PROJECT_DIR/.claude/engineering-baseline.json" \
     --name "$PROJECT_NAME" \
     --kind "$PROJECT_KIND" \
     --stack "$STACK_TEXT" \
@@ -1003,7 +1012,7 @@ if [[ -f package.json ]]; then
       done
     elif [[ "$MONOREPO" == true && "$PACKAGE_MANAGER" == "pnpm" ]]; then
       cat <<'PNPM_FALLBACK_EOF'
-scripts=(lint typecheck test build)
+scripts=(lint typecheck test build test:e2e e2e)
 ran=false
 for script in "${scripts[@]}"; do
   echo "==> workspace $script"
@@ -1121,6 +1130,31 @@ fi
 chmod +x "$VERIFY_FILE"
 echo "Configured .claude/verify.sh from detected project commands."
 
+# A monorepo commonly declares its e2e suite in a workspace package and never at the root, so
+# the gate silently covers everything except the layer that exercises the system end to end.
+# Reported rather than wired up: the harness would have to invent the filter command, and an
+# e2e suite that needs infrastructure the preflight does not start fails as a code defect and
+# blocks. Naming the one line that closes it leaves the decision where the evidence is.
+case " ${VERIFY_SCRIPTS[*]+"${VERIFY_SCRIPTS[*]}"} " in
+  *" test:e2e "*|*" e2e "*|*" verify "*) ;;
+  *)
+    WORKSPACE_E2E=""
+    for candidate_manifest in apps/*/package.json packages/*/package.json */package.json; do
+      [[ -f "$candidate_manifest" ]] || continue
+      [[ "$candidate_manifest" == "package.json" ]] && continue
+      if grep -Eq '"(test:e2e|e2e)"[[:space:]]*:' "$candidate_manifest" 2>/dev/null; then
+        WORKSPACE_E2E="$candidate_manifest"
+        break
+      fi
+    done
+    if [[ -n "$WORKSPACE_E2E" ]]; then
+      echo "Note: $WORKSPACE_E2E declares an end-to-end suite that no root script reaches, so it" >&2
+      echo "stays outside .claude/verify.sh and the Stop gate. Add a root package.json script named" >&2
+      echo "test:e2e that runs it, then rerun this initializer to put it in the gate." >&2
+    fi
+    ;;
+esac
+
 PREFLIGHT_STATUS="skipped"
 VERIFY_STATUS="skipped"
 VERIFY_EXIT=0
@@ -1192,7 +1226,10 @@ if [[ "$VERIFY" == true ]]; then
       echo "Automatic Stop verification enabled."
       if [[ "$AI_STATUS" == "passed" && -f "$PROJECT_DIR/.claude/engineering-baseline.json" ]]; then
         touch "$BASELINE_REFRESH_MARKER"
-        rm -f "$RUNTIME_STATE_DIR/baseline-dirty" "$RUNTIME_STATE_DIR/changed-files.txt" 2>/dev/null || true
+        # The fingerprint goes with them: it records which changed set the last refresh already
+        # analysed, and this baseline is brand new, so keeping it would suppress the first refresh.
+        rm -f "$RUNTIME_STATE_DIR/baseline-dirty" "$RUNTIME_STATE_DIR/changed-files.txt" \
+          "$RUNTIME_STATE_DIR/changed-fingerprint" 2>/dev/null || true
         echo "Automatic living-baseline refresh enabled."
       fi
     fi

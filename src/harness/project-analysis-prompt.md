@@ -40,6 +40,18 @@ Ignore generated output, vendored dependencies, caches, build artifacts, coverag
 - Evidence paths must be repository-relative and point to files or directories you actually inspected.
 - Findings should be concrete. Report the axes honestly; it is normal for a repository to have no finding that computes to critical.
 - Do not manufacture issues just to populate the review.
+- Whether the harness itself is installed, enabled or running is outside this repository and
+  outside what you can see. Its hooks, its Stop gate, its baseline refresh and the markers that
+  enable them all live under the user's `~/.claude`, which this analysis cannot read.
+  `.claude/verify-on-stop` and `.claude/baseline-refresh-on-stop` are absent from repositories
+  **on purpose** — an in-repo marker let a clone grant itself permission to have its own
+  `.claude/verify.sh` executed, so the harness removes them and keeps the permission outside the
+  repository. Their absence is not evidence that anything is disabled, and neither is a project
+  `settings.json` that registers no harness hook. Do not report a finding about the harness
+  being unwired, about a promise of automatic refresh not being kept, or about missing
+  `.claude` markers. `.claude/verify.sh` and `.claude/preflight.sh` are fair game only for what
+  they do or fail to do *for this repository* — a check this project needs that the script never
+  runs, infrastructure this project needs that it never starts.
 
 ## Rating a finding
 

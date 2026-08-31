@@ -98,3 +98,43 @@ test('every top-level schema key is read by its renderer', () => {
     )
   }
 })
+
+// A status the schema allows but the renderer does not file goes somewhere by accident. Both
+// `accepted` and `invalid` are archived rather than active — one records a decision to carry a
+// real risk, the other that the claim was never true — and a renderer that treated either as
+// ordinary open work would put it back in the list that asks for action every session.
+test('every finding status the schema allows is filed by the refresh renderer', () => {
+  const schema = JSON.parse(fs.readFileSync(path.join(ROOT, 'src', 'harness', 'baseline-refresh-schema.json'), 'utf8'))
+  const renderer = fs.readFileSync(path.join(ROOT, 'tools', 'render-baseline-refresh.mjs'), 'utf8')
+
+  const statuses = new Set()
+  const walk = node => {
+    if (!node || typeof node !== 'object') return
+    if (node.properties?.status?.enum) for (const value of node.properties.status.enum) statuses.add(value)
+    for (const value of Object.values(node)) walk(value)
+  }
+  walk(schema)
+  assert.ok(statuses.has('invalid'), 'the schema offers no way to close a false positive')
+
+  const archived = /const ARCHIVED_STATUSES *= *\[([^\]]*)\]/.exec(renderer)
+  assert.ok(archived, 'could not find ARCHIVED_STATUSES in the refresh renderer')
+  for (const status of ['resolved', 'stale', 'accepted', 'invalid']) {
+    assert.match(archived[1], new RegExp(`'${status}'`), `${status} is not archived by the renderer`)
+  }
+  for (const status of statuses) {
+    assert.match(renderer, new RegExp(`'${status}'`), `the renderer never mentions the status ${status}`)
+  }
+})
+
+// The read-only analysis runs with cwd set to the repository and `--tools "Read,Glob,Grep"`, so
+// it cannot see ~/.claude — where every harness hook, marker and setting actually lives. It once
+// read a project settings.json, saw no harness hook and no .claude/verify-on-stop, and filed a
+// HIGH-adjacent finding saying the harness was not running. Both markers are removed from
+// repositories on purpose; the analysis was reasoning from something it had no access to.
+test('both analysis prompts put the harness wiring out of scope', () => {
+  for (const name of ['project-analysis-prompt.md', 'baseline-refresh-prompt.md']) {
+    const body = fs.readFileSync(path.join(ROOT, 'src', 'harness', name), 'utf8')
+    assert.match(body, /verify-on-stop/, `${name} does not name the markers whose absence misled the analysis`)
+    assert.match(body, /~\/\.claude/, `${name} does not say where the harness wiring actually lives`)
+  }
+})

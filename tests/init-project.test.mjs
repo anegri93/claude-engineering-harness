@@ -269,3 +269,65 @@ test('a compose file nothing refers to is left alone', { skip }, t => {
   assert.equal(box.result.status, 0, box.result.stderr)
   assert.doesNotMatch(box.log, /up -d/, 'the preflight launched a stack the repository never asked for')
 })
+
+// End-to-end suites were never candidates for the generated verify.sh, so a repository could
+// keep its whole integration layer outside the Stop gate with nothing saying so. One project
+// ran a session with 42 of its 54 e2e suites red while the gate reported green on every Stop,
+// and a flake that had lived in those suites for months was structurally invisible to it.
+test('an end-to-end script declared at the root lands in the gate', { skip }, t => {
+  const { verify, body } = fixture(t, {
+    'package.json': JSON.stringify({
+      name: 'fixture-e2e',
+      scripts: { lint: 'eslint .', test: 'vitest run', build: 'tsc', 'test:e2e': 'playwright test' }
+    }),
+    'Dockerfile': 'FROM node:22-slim\n'
+  })
+  assertUsableScript(verify, body)
+  assert.match(body, /npm run test:e2e/, 'the e2e suite is not verified')
+  // Slowest step, and usually the one that needs the build, so the cheap checks fail first.
+  assert.ok(body.indexOf('npm run build') < body.indexOf('npm run test:e2e'),
+    'the e2e step runs before the build')
+})
+
+// The common monorepo shape: root scripts for the cheap checks, e2e declared only inside a
+// workspace package. Nothing at the root reaches it, so the gate cannot run it. Reported
+// rather than wired up — inventing the filter command would make an e2e suite whose
+// infrastructure the preflight does not start block as though the code were broken.
+test('an e2e script only a workspace declares is reported, not silently dropped', { skip }, t => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'harness-init-home-'))
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'harness-init-project-'))
+  t.after(() => {
+    fs.rmSync(home, { recursive: true, force: true })
+    fs.rmSync(project, { recursive: true, force: true })
+  })
+
+  const harness = path.join(home, '.claude', 'harness')
+  fs.mkdirSync(path.join(harness, 'project-template', '.claude'), { recursive: true })
+  fs.writeFileSync(path.join(harness, 'engineering.md'), '# standard\n')
+  fs.copyFileSync(
+    path.join(ROOT, 'project-template', '.claude', 'preflight.sh'),
+    path.join(harness, 'project-template', '.claude', 'preflight.sh')
+  )
+
+  fs.writeFileSync(path.join(project, 'package.json'), JSON.stringify({
+    name: 'fixture-workspace-root',
+    scripts: { lint: 'eslint .', typecheck: 'tsc --noEmit', test: 'vitest run', build: 'tsc' }
+  }))
+  fs.mkdirSync(path.join(project, 'apps', 'api'), { recursive: true })
+  fs.writeFileSync(path.join(project, 'apps', 'api', 'package.json'), JSON.stringify({
+    name: '@fixture/api',
+    scripts: { 'test:e2e': 'jest --config jest-e2e.json' }
+  }))
+  execFileSync('git', ['init', '-q'], { cwd: project, stdio: 'ignore' })
+
+  const result = spawnSync('bash', [INIT, '--skip-graft', '--skip-ai-analysis', '--skip-verify', '--project', project], {
+    env: { ...process.env, HOME: home, CLAUDE_PROJECT_DIR: '' },
+    encoding: 'utf8'
+  })
+  assert.equal(result.status, 0, result.stderr)
+
+  const body = fs.readFileSync(path.join(project, '.claude', 'verify.sh'), 'utf8')
+  assert.doesNotMatch(body, /test:e2e/, 'the generator invented a command to reach a workspace script')
+  assert.match(result.stderr, /apps\/api\/package\.json/, 'the unreachable e2e suite was not named')
+  assert.match(result.stderr, /test:e2e/, 'the note does not say which script to add')
+})

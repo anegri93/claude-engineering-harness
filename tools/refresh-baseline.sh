@@ -58,12 +58,30 @@ fi
 STATE_DIR="${CLAUDE_HOME}/harness-runtime/${PROJECT_SLUG}_${PROJECT_HASH}"
 DIRTY_FILE="$STATE_DIR/baseline-dirty"
 CHANGED_FILE="$STATE_DIR/changed-files.txt"
+# What the last refresh already analysed. Git is a second source of changed files (see below),
+# and a working tree that stays dirty across turns would otherwise buy a paid model call on
+# every Stop, including one that only answered a question. The fingerprint makes the second
+# source cost nothing when nothing moved.
+FINGERPRINT_FILE="$STATE_DIR/changed-fingerprint"
 
 # Enablement is read from the user's state directory, not the repository: a cloned repository
 # must not be able to switch on a step that spends a paid model call on its content.
 [[ -f "$STATE_DIR/baseline-refresh-on-stop" || "$FORCE" == true ]] || exit 0
 
-if [[ "$FORCE" != true && ! -f "$DIRTY_FILE" ]]; then
+# The PostToolUse edit record only fires for Write/Edit/MultiEdit/NotebookEdit. A task that
+# edits through Bash — a heredoc, `sed -i`, a python one-liner — leaves it empty, and this
+# script used to exit here as though the session had changed nothing. That is how a session
+# that fixed and verified three findings left the baseline still reporting all three as open,
+# nine Stop hooks in a row, silently. Git sees those edits, so it is a peer source of the
+# changed set and not a --force-only fallback.
+GIT_CHANGED=""
+if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  GIT_CHANGED="$({ git diff --name-only; git diff --cached --name-only; git ls-files --others --exclude-standard; } 2>/dev/null | sort -u | head -n 80)"
+fi
+
+# A dirty marker is proof this task edited something. Without one, git-reported changes are the
+# only reason to look, and no changes at all means there is nothing to look at.
+if [[ "$FORCE" != true && ! -f "$DIRTY_FILE" && -z "$GIT_CHANGED" ]]; then
   exit 0
 fi
 
@@ -71,8 +89,8 @@ CHANGED_FILES=""
 if [[ -f "$CHANGED_FILE" ]]; then
   CHANGED_FILES="$(sed '/^[[:space:]]*$/d' "$CHANGED_FILE" | sort -u | head -n 80)"
 fi
-if [[ -z "$CHANGED_FILES" && "$FORCE" == true ]] && command -v git >/dev/null 2>&1; then
-  CHANGED_FILES="$({ git diff --name-only; git diff --cached --name-only; git ls-files --others --exclude-standard; } 2>/dev/null | sort -u | head -n 80)"
+if [[ -z "$CHANGED_FILES" ]]; then
+  CHANGED_FILES="$GIT_CHANGED"
 fi
 if [[ -z "$CHANGED_FILES" ]]; then
   rm -f "$DIRTY_FILE" "$CHANGED_FILE"
@@ -80,13 +98,32 @@ if [[ -z "$CHANGED_FILES" ]]; then
 fi
 
 # Ignore a task whose only edits were harness-generated files. The PostToolUse hook already
-# filters these out; this is the defensive re-filter for --force runs, where the changed set
-# comes from git instead. It mirrors the `case` list in src/hooks/mark-baseline-dirty.sh —
-# change one and change the other. tests/hooks.test.mjs asserts the two agree.
+# filters these out; this is the defensive re-filter for the git-derived set, which is what a
+# Bash-only task and every --force run are analysed from. It mirrors the `case` list in
+# src/hooks/mark-baseline-dirty.sh — change one and change the other. tests/hooks.test.mjs
+# asserts the two agree.
 RELEVANT_FILES="$(printf '%s\n' "$CHANGED_FILES" | grep -Ev '^(\.claude/(engineering-baseline\.(md|json)|rules/|verify\.sh|verify-on-stop|baseline-refresh-on-stop)|graft/|node_modules/|dist/|build/|coverage/)' || true)"
 if [[ -z "$RELEVANT_FILES" ]]; then
   rm -f "$DIRTY_FILE" "$CHANGED_FILE"
   exit 0
+fi
+
+# What this run is about to analyse, hashed. A working tree can stay dirty across many turns:
+# without this, reading git as a second source would buy a paid model call on every later Stop,
+# including one that only answered a question. Taken after the ignore filter on purpose — an
+# untracked cache file appearing under graft/ or dist/ must not read as a new changed set.
+FINGERPRINT=""
+if command -v shasum >/dev/null 2>&1; then
+  FINGERPRINT="$(printf '%s' "$RELEVANT_FILES" | shasum -a 256 | awk '{print $1}')"
+elif command -v sha256sum >/dev/null 2>&1; then
+  FINGERPRINT="$(printf '%s' "$RELEVANT_FILES" | sha256sum | awk '{print $1}')"
+fi
+# Only when git is the source. An edit record is this task's own account of what it touched, so
+# it is always worth a look; a fingerprint match there would skip a genuine second edit pass.
+if [[ "$FORCE" != true && ! -f "$DIRTY_FILE" && -n "$FINGERPRINT" && -f "$FINGERPRINT_FILE" ]]; then
+  if [[ "$(cat "$FINGERPRINT_FILE" 2>/dev/null)" == "$FINGERPRINT" ]]; then
+    exit 0
+  fi
 fi
 
 # Three outcomes, not two: graft absent, graft present but silent, graft answered. Collapsing
@@ -201,4 +238,13 @@ if [[ "$FULL" == "true" ]]; then
 fi
 
 rm -f "$DIRTY_FILE" "$CHANGED_FILE"
+# Record what this run analysed, so an unchanged dirty tree does not buy the same model call
+# again on the next Stop. Written only here, at the end: a run that deferred for an environment
+# reason must be retried by the next Stop, not skipped as though it had been analysed.
+if [[ -n "$FINGERPRINT" ]]; then
+  mkdir -p "$STATE_DIR" 2>/dev/null || true
+  printf '%s' "$FINGERPRINT" > "$FINGERPRINT_FILE" 2>/dev/null || true
+else
+  rm -f "$FINGERPRINT_FILE" 2>/dev/null || true
+fi
 exit 0

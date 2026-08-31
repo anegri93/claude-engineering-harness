@@ -23,11 +23,12 @@ const MINIMAL_ANALYSIS = {
   architecture_summary: 'One layer that does one thing.'
 }
 
-function renderAnalysis(dir, structuredOutput, existingRules) {
+function renderAnalysis(dir, structuredOutput, existingRules, existingBaseline) {
   const input = path.join(dir, 'analysis-response.json')
   const out = path.join(dir, 'out')
   fs.writeFileSync(input, JSON.stringify({ structured_output: structuredOutput }))
   const extra = existingRules ? ['--existing-rules', existingRules] : []
+  if (existingBaseline) extra.push('--existing-baseline', existingBaseline)
   const stdout = execFileSync(process.execPath, [
     path.join(TOOLS, 'render-project-analysis.mjs'),
     '--input', input,
@@ -883,4 +884,181 @@ test('both prompts say that finding nothing is a valid answer', () => {
     /empty `new_findings` list/,
     'the refresh prompt never says an empty finding list is acceptable'
   )
+})
+
+// --- re-initialization keeps finding identity ---------------------------------------
+
+// A rerun used to number findings from scratch, so every finding was renamed and every decision
+// about one was discarded. That is how a repository ended up shipping a source comment pointing
+// at "(F004)" for a finding its baseline by then called F001, and why an accepted risk came back
+// demanding action on the next initialization.
+function risk(title, extra = {}) {
+  return {
+    title,
+    detail: 'detail',
+    example: 'Ana clicks approve and the row is written twice.',
+    impact: 'incorrect_result',
+    trigger: 'normal_use',
+    blast_radius: 'component',
+    fix_cost: 'single_site',
+    evidence_paths: ['src/a.ts'],
+    recommendation: 'do something',
+    ...extra
+  }
+}
+
+function priorBaseline(dir, findings, nextId) {
+  const file = path.join(dir, 'prior-baseline.json')
+  fs.writeFileSync(file, JSON.stringify({
+    version: 2,
+    system_summary: 'prior',
+    architecture_summary: 'prior',
+    business_invariants: [],
+    confidence_notes: [],
+    findings,
+    next_finding_id: nextId,
+    full_reanalysis_recommended: false,
+    full_reanalysis_reason: ''
+  }))
+  return file
+}
+
+test('re-initialization keeps a finding on the number it already had', t => {
+  const dir = workspace(t)
+  const prior = priorBaseline(dir, [
+    finding('F001', 'low', { title: 'A comment states the opposite precedence' }),
+    finding('F002', 'high', { title: 'A failed audit write turns a mutation into a 500' })
+  ], 3)
+
+  // The new analysis reports them in the other order, which is exactly when positional
+  // numbering silently swapped two findings' identities.
+  const rendered = renderAnalysis(dir, {
+    ...MINIMAL_ANALYSIS,
+    risks: [
+      risk('A failed audit write turns a mutation into a 500'),
+      risk('A comment states the opposite precedence')
+    ]
+  }, undefined, prior)
+
+  const byTitle = Object.fromEntries(rendered.state().findings.map(f => [f.title, f.id]))
+  assert.equal(byTitle['A comment states the opposite precedence'], 'F001')
+  assert.equal(byTitle['A failed audit write turns a mutation into a 500'], 'F002')
+})
+
+test('a finding new to a re-initialization takes its number from the persisted counter', t => {
+  const dir = workspace(t)
+  // F002 through F008 were pruned by the retention cap; the counter remembers they existed.
+  const prior = priorBaseline(dir, [finding('F001', 'low', { title: 'Still here' })], 9)
+
+  const rendered = renderAnalysis(dir, {
+    ...MINIMAL_ANALYSIS,
+    risks: [risk('Still here'), risk('Brand new')]
+  }, undefined, prior)
+
+  const state = rendered.state()
+  const byTitle = Object.fromEntries(state.findings.map(f => [f.title, f.id]))
+  assert.equal(byTitle['Still here'], 'F001')
+  assert.equal(byTitle['Brand new'], 'F009', 'a retired number was handed to a different finding')
+  assert.equal(state.next_finding_id, 10)
+})
+
+test('re-initialization does not reopen a decision a person already made', t => {
+  const dir = workspace(t)
+  const prior = priorBaseline(dir, [
+    finding('F001', 'high', { title: 'Four caches force a single instance', status: 'accepted', resolution: 'Deploy is pinned to one instance.' }),
+    finding('F002', 'low', { title: 'The harness refresh is not wired', status: 'invalid', resolution: 'The markers live outside the repository on purpose.' })
+  ], 3)
+
+  const rendered = renderAnalysis(dir, {
+    ...MINIMAL_ANALYSIS,
+    risks: [risk('Four caches force a single instance')]
+  }, undefined, prior)
+
+  const state = rendered.state()
+  const accepted = state.findings.find(f => f.id === 'F001')
+  assert.equal(accepted.status, 'accepted', 'an accepted risk came back demanding action')
+  assert.equal(accepted.resolution, 'Deploy is pinned to one instance.')
+
+  // Not re-reported by the new analysis, and carried anyway: an invalid finding exists to stop
+  // the same false positive being filed a third time, so deleting it hands that job to nobody.
+  const withdrawn = state.findings.find(f => f.id === 'F002')
+  assert.ok(withdrawn, 'a withdrawn finding was dropped and can be reported again')
+  assert.equal(withdrawn.status, 'invalid')
+
+  const markdown = rendered.read('engineering-baseline.md')
+  assert.match(markdown, /## Accepted risks/)
+  assert.match(markdown, /## Withdrawn findings/)
+  assert.doesNotMatch(markdown.split('## Accepted risks')[0], /Four caches force a single instance/,
+    'an accepted risk is still listed among the active findings')
+})
+
+test('a re-initialization with no prior baseline still numbers from one', t => {
+  const dir = workspace(t)
+  const rendered = renderAnalysis(dir, { ...MINIMAL_ANALYSIS, risks: [risk('First ever')] })
+  assert.equal(rendered.state().findings[0].id, 'F001')
+  assert.equal(rendered.state().next_finding_id, 2)
+})
+
+test('a corrupt prior baseline degrades to fresh numbering instead of aborting', t => {
+  const dir = workspace(t)
+  const bad = path.join(dir, 'corrupt.json')
+  fs.writeFileSync(bad, '{ not json at all')
+  const rendered = renderAnalysis(dir, { ...MINIMAL_ANALYSIS, risks: [risk('Something')] }, undefined, bad)
+  assert.equal(rendered.state().findings[0].id, 'F001')
+})
+
+// --- invalid: closing a false positive -----------------------------------------------
+
+// Before this status the only ways to close a finding that was never true were to hand-edit a
+// generated file — which the harness tells people not to do — or to leave it open forever. One
+// project carried a finding for exactly this reason: it claimed the harness was unwired, when
+// the analysis simply could not see the markers, which live outside the repository.
+test('a finding marked invalid leaves the active list and is not reported again', t => {
+  const dir = workspace(t)
+  const current = {
+    version: 2,
+    system_summary: 's',
+    architecture_summary: 'a',
+    business_invariants: [],
+    confidence_notes: [],
+    findings: [finding('F001', 'low', { title: 'The baseline promises a refresh that is not wired' })],
+    next_finding_id: 2,
+    full_reanalysis_recommended: false,
+    full_reanalysis_reason: ''
+  }
+
+  const withdrawn = renderRefresh(dir, current, {
+    finding_reviews: [{
+      finding_id: 'F001',
+      status: 'invalid',
+      resolution: 'The enabling markers live under ~/.claude, which the analysis cannot read.'
+    }],
+    new_findings: [],
+    summary: 'withdrew a false positive'
+  })
+
+  assert.equal(withdrawn.state.findings[0].status, 'invalid')
+  assert.match(withdrawn.markdown, /## Withdrawn findings/)
+  const activeSection = withdrawn.markdown.split('## Withdrawn findings')[0]
+  assert.doesNotMatch(activeSection, /promises a refresh that is not wired/,
+    'a withdrawn finding is still listed as active work')
+
+  // The whole point: a later analysis reporting the same thing must not file it again.
+  const again = renderRefresh(dir, withdrawn.state, {
+    finding_reviews: [],
+    new_findings: [{
+      title: 'The baseline promises a refresh that is not wired',
+      detail: 'd',
+      example: 'e',
+      impact: 'maintenance',
+      trigger: 'normal_use',
+      blast_radius: 'component',
+      fix_cost: 'single_site',
+      evidence_paths: ['CLAUDE.md'],
+      recommendation: 'r'
+    }],
+    summary: 'refiled'
+  }, 'b')
+  assert.equal(again.state.findings.length, 1, 'a withdrawn finding was filed a second time')
+  assert.equal(again.result.added, 0)
 })
