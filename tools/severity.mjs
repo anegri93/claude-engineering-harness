@@ -79,3 +79,37 @@ export function severityLabel(severity) {
   const s = str(severity)
   return SEVERITY_LEVELS.includes(s) ? s.toUpperCase() : 'NOT MEASURED'
 }
+
+// ---------------------------------------------------------------------------
+// Worth acting on
+//
+// The three axes above measure harm only. Nothing in them asks what a fix costs, so a real but
+// trivial weakness that would take a cross-cutting refactor to remove printed exactly like a
+// one-line bug, and the reader had no way to tell them apart. Every run then filled its ten slots
+// with things nobody was ever going to do, and the ones that mattered lost their signal.
+//
+// `fix_cost` is the fourth reported fact and the harness computes the verdict from it, for the
+// same reason the rating is computed: "how many call sites does the fix touch" is arguable against
+// `recommendation` and `evidence_paths` in a way "is this worth it" never was.
+//
+// Harm still wins. A `critical` or `high` finding is worth acting on at any cost — the verdict
+// only ever demotes the tail.
+export const FIX_COST = ['single_site', 'contained', 'invasive']
+export const ACT = 'act'
+export const CARRY = 'carry'
+
+// Severity → the fix costs at which the finding stops being worth acting on.
+const CARRY_AT = {
+  medium: ['invasive'],
+  low: ['contained', 'invasive'],
+}
+
+// Absence is not data here either: a finding that reported no fix cost, or one carried over from a
+// baseline written before this axis existed, stays actionable. Demoting the unmeasured would hide
+// findings behind a fact nobody supplied.
+export function verdictOf(finding) {
+  const cost = str(finding?.fix_cost)
+  if (!FIX_COST.includes(cost)) return ACT
+  const { severity } = resolveSeverity(finding)
+  return CARRY_AT[severity]?.includes(cost) ? CARRY : ACT
+}

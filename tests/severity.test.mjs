@@ -18,6 +18,10 @@ import {
   TRIGGER,
   BLAST_RADIUS,
   SEVERITY_LEVELS,
+  FIX_COST,
+  verdictOf,
+  ACT,
+  CARRY,
 } from '../tools/severity.mjs'
 
 function walk(node, visit, key) {
@@ -61,17 +65,17 @@ test('every schema offers exactly the axis values the severity table rates', () 
   for (const name of ['project-analysis-schema.json', 'baseline-refresh-schema.json']) {
     const schema = JSON.parse(fs.readFileSync(path.join(schemaDir, name), 'utf8'))
     walk(schema, (node, key) => {
-      if (['impact', 'trigger', 'blast_radius'].includes(key) && Array.isArray(node?.enum)) {
+      if (['impact', 'trigger', 'blast_radius', 'fix_cost'].includes(key) && Array.isArray(node?.enum)) {
         sites.push({ file: name, axis: key, values: node.enum })
       }
     })
   }
   // project-analysis defines the axes once; baseline-refresh defines them for reviews and for new
-  // findings. Three sites, three axes: if a site disappears, this count catches it before the
+  // findings. Three sites, four axes: if a site disappears, this count catches it before the
   // comparison below silently passes over nothing.
-  assert.equal(sites.length, 9, `expected 9 axis enums across the schemas, found ${sites.length}`)
+  assert.equal(sites.length, 12, `expected 12 axis enums across the schemas, found ${sites.length}`)
 
-  const expected = { impact: IMPACT, trigger: TRIGGER, blast_radius: BLAST_RADIUS }
+  const expected = { impact: IMPACT, trigger: TRIGGER, blast_radius: BLAST_RADIUS, fix_cost: FIX_COST }
   for (const site of sites) {
     assert.deepEqual(site.values, expected[site.axis],
       `${site.file} offers a different ${site.axis} vocabulary than tools/severity.mjs rates`)
@@ -144,4 +148,69 @@ test('an unrated finding is labelled as unmeasured, not as a level', () => {
   assert.equal(severityLabel(UNRATED), 'NOT MEASURED')
   assert.equal(severityLabel('high'), 'HIGH')
   assert.equal(severityLabel(''), 'NOT MEASURED')
+})
+
+// --- worth acting on ---------------------------------------------------------
+//
+// The three harm axes gave every finding a level and no way to tell a one-line fix from a
+// cross-cutting refactor, so ten slots filled with work nobody would do and the findings that
+// mattered lost their signal. `fix_cost` is the fourth reported fact; this cross is the whole
+// mechanism, so it is pinned cell by cell — a single wrong cell silently moves a finding between
+// the section that asks for action and the one that does not.
+
+// Written out rather than derived from the module.
+const EXPECTED_VERDICT = {
+  critical: { single_site: ACT,  contained: ACT,   invasive: ACT },
+  high:     { single_site: ACT,  contained: ACT,   invasive: ACT },
+  medium:   { single_site: ACT,  contained: ACT,   invasive: CARRY },
+  low:      { single_site: ACT,  contained: CARRY, invasive: CARRY },
+}
+
+test('every severity/fix-cost pair yields the agreed verdict', () => {
+  for (const severity of SEVERITY_LEVELS) {
+    for (const fix_cost of FIX_COST) {
+      assert.equal(
+        verdictOf({ severity, fix_cost }),
+        EXPECTED_VERDICT[severity][fix_cost],
+        `${severity} x ${fix_cost} is not the agreed verdict`
+      )
+    }
+  }
+})
+
+test('the verdict reads the severity computed from the axes, not a supplied one', () => {
+  // data_loss x normal_use is critical however cheap or costly the fix, and a model-supplied
+  // `severity` must not be able to talk a finding out of the active list.
+  const axes = { impact: 'data_loss', trigger: 'normal_use', blast_radius: 'component' }
+  assert.equal(verdictOf({ ...axes, severity: 'low', fix_cost: 'invasive' }), ACT)
+  // maintenance x hypothetical is low: the same fix cost now carries.
+  assert.equal(verdictOf({ impact: 'maintenance', trigger: 'hypothetical', blast_radius: 'component', fix_cost: 'invasive' }), CARRY)
+})
+
+test('harm at high or above is worth acting on at any fix cost', () => {
+  for (const fix_cost of FIX_COST) {
+    assert.equal(verdictOf({ impact: 'security', trigger: 'already_occurring', blast_radius: 'component', fix_cost }), ACT)
+    assert.equal(verdictOf({ impact: 'incorrect_result', trigger: 'normal_use', blast_radius: 'component', fix_cost }), ACT)
+  }
+})
+
+test('an unmeasured or nonsense fix cost leaves the finding actionable', () => {
+  // Absence is not data in this direction too: demoting a finding because nobody reported what it
+  // costs would hide it behind a fact that was never supplied. Legacy baselines carry no fix cost
+  // at all, so every stored finding must survive the upgrade as active work.
+  const low = { impact: 'maintenance', trigger: 'hypothetical', blast_radius: 'component' }
+  assert.equal(verdictOf(low), ACT)
+  assert.equal(verdictOf({ ...low, fix_cost: '' }), ACT)
+  assert.equal(verdictOf({ ...low, fix_cost: 'enormous' }), ACT)
+  assert.equal(verdictOf({}), ACT)
+  assert.equal(verdictOf({ severity: 'low' }), ACT)
+})
+
+test('an unrated finding is never carried', () => {
+  // A finding whose harm nobody measured must not be filed as not worth fixing on the strength of
+  // its cost alone.
+  for (const fix_cost of FIX_COST) {
+    assert.equal(verdictOf({ fix_cost }), ACT)
+    assert.equal(verdictOf({ impact: 'invented', trigger: 'already_occurring', fix_cost }), ACT)
+  }
 })

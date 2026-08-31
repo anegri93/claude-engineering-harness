@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs'
 import path from 'node:path'
-import { severityOf, severityRank, severityLabel } from './severity.mjs'
+import { severityOf, severityRank, severityLabel, verdictOf, CARRY } from './severity.mjs'
 
 function parseArgs(argv) {
   const out = {}
@@ -364,9 +364,11 @@ const baselineState = {
     impact: text(risk?.impact),
     trigger: text(risk?.trigger),
     blast_radius: text(risk?.blast_radius),
+    fix_cost: text(risk?.fix_cost),
     severity: severityOf(risk),
     title: text(risk?.title) || 'Finding',
     detail: text(risk?.detail),
+    example: text(risk?.example),
     evidence_paths: list(risk?.evidence_paths, 8).map(safeRepoPath).filter(Boolean),
     recommendation: text(risk?.recommendation),
     resolution: '',
@@ -384,6 +386,11 @@ function renderFinding(baseline, finding) {
   baseline.push('')
   if (text(finding?.detail)) baseline.push(text(finding.detail))
   baseline.push('')
+  // The axes say how bad it would be; only the example says what actually goes wrong, which is
+  // what lets a reader throw the finding out. A finding that arrived without one says so rather
+  // than rendering as though the mechanism were self-evident.
+  baseline.push(text(finding?.example) ? `**Example.** ${text(finding.example).replace(/\s+/g, ' ')}` : '**Example.** Not provided.')
+  baseline.push('')
   baseline.push(`- Evidence: ${evidence(finding?.evidence_paths)}`)
   // Same line the refresh renderer writes: the initial baseline and every later one are the same
   // artifact, and a reader should be able to argue with the inputs rather than the verdict.
@@ -392,6 +399,9 @@ function renderFinding(baseline, finding) {
   } else {
     baseline.push('- Rated: not measured')
   }
+  // The cost is the other half of the verdict that files a finding as carried, so it is shown
+  // beside the rating: a reader can then argue with the input rather than only with the section.
+  if (text(finding?.fix_cost)) baseline.push(`- Fix cost: ${text(finding.fix_cost)}`)
   if (text(finding?.recommendation)) baseline.push(`- Incremental recommendation: ${text(finding.recommendation).replace(/\s+/g, ' ')}`)
   if (text(finding?.resolution)) baseline.push(`- Resolution note: ${text(finding.resolution).replace(/\s+/g, ' ')}`)
   baseline.push('')
@@ -412,11 +422,29 @@ baseline.push('')
 baseline.push(architectureSummary)
 baseline.push('')
 
+// Harm and cost are reported separately and crossed in tools/severity.mjs. A finding that is real
+// but costs more to remove than the harm it carries is filed here rather than dropped: deleting it
+// would make the analysis unreproducible, and leaving it among the actionable ones is what buried
+// them in the first place.
+const unarchived = baselineState.findings.filter((f) => !['resolved', 'stale'].includes(f.status))
+const active = unarchived.filter((f) => verdictOf(f) !== CARRY)
+const carried = unarchived.filter((f) => verdictOf(f) === CARRY)
+
 baseline.push('## Active findings')
 baseline.push('')
-const active = baselineState.findings.filter((f) => !['resolved', 'stale'].includes(f.status))
 if (active.length) for (const finding of active) renderFinding(baseline, finding)
 else baseline.push('No active engineering findings are currently recorded.')
+
+if (carried.length) {
+  baseline.push('')
+  baseline.push('## Carried findings — not worth the fix')
+  baseline.push('')
+  // Counted out loud rather than silently omitted: absence is not data, and a reader has to be able
+  // to see that these were measured and set aside, not that nothing was found.
+  baseline.push(`${carried.length} finding(s) are real but cost more to remove than the harm they carry. They are recorded, not scheduled. Revisit one when its area is being changed anyway, or when new evidence raises its rating.`)
+  baseline.push('')
+  for (const finding of carried) renderFinding(baseline, finding)
+}
 
 const resolved = baselineState.findings.filter((f) => f.status === 'resolved')
 if (resolved.length) {
@@ -459,6 +487,7 @@ fs.writeFileSync(path.join(outDir, 'analysis.json'), JSON.stringify(analysis, nu
 console.log(JSON.stringify({
   generated_rule_count: generatedNames.length + 1,
   risk_count: risks.length,
+  carried_count: carried.length,
   always_on_rule_count: alwaysOnRules.length,
   module_count: modules.length
 }))

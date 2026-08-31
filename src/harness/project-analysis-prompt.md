@@ -56,6 +56,18 @@ same finding gets the same level on every run and two projects' ratings mean the
 The schema defines each value. Choose the one the evidence supports; do not pick a harsher value to
 signal that a finding matters, or a milder one to signal that it is tolerated.
 
+## Is the finding worth acting on
+
+The three axes above measure harm only. Nothing in them says what removing the finding costs, so a
+real but trivial weakness that needs a cross-cutting refactor reads exactly like a one-line bug.
+Report that cost as `fix_cost` and the harness crosses the two: a `low` finding whose fix is
+contained or invasive is filed as carried rather than as work to do, while harm at `high` or above
+stays worth acting on however expensive the fix is.
+
+Cost the fix you actually wrote in `recommendation`, in files and call sites, not the ideal
+redesign you would prefer. This is the field that lets a finding be real and still not worth doing:
+use it instead of dropping the finding or softening its axes to keep it out of the report.
+
 ## Desired harness behavior
 
 The resulting harness should help future agents:
@@ -91,6 +103,16 @@ and leaves nothing in the diff to read.
 - `business_invariants`: only invariants clearly evidenced by code or documentation.
 - `rule_groups`: 2 to 8 focused rule groups. Use an empty paths list only when the entire repository should load the rule.
 - `risks`: at most 10 concrete production, security, correctness, or maintainability risks with evidence, an incremental recommendation, and the three rating axes described above.
+
+Every finding must be judgeable by someone who did not write it. The axes say how bad the
+consequence would be; they never say what actually goes wrong, so a reader given only a severity
+has no way to throw a finding out. Write `detail` as the mechanism in causal order and `example` as
+one concrete run that ends badly — a named actor, the step that fails, the wrong state left behind.
+An example you cannot ground in this repository's own code is a finding you should not report.
+
+Zero to three findings is the ordinary result of this analysis. Ten is the ceiling of the array, not
+a target, and a repository that yields nothing you would act on is a correct outcome: return an
+empty `risks` list rather than padding it to look thorough.
 - `confidence_notes`: ambiguities, incomplete areas, or conclusions that could not be verified.
 
 Do not include secrets, credentials, tokens, personal data values, or copied sensitive payloads in the output.

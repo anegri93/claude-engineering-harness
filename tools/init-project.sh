@@ -757,13 +757,20 @@ if [[ "$AI_ANALYSIS" == true ]]; then
   AI_STATUS="passed"
   AI_RULE_COUNT="$(node -e 'const x=JSON.parse(process.argv[1]);console.log(x.generated_rule_count||0)' "$RENDER_RESULT")"
   AI_RISK_COUNT="$(node -e 'const x=JSON.parse(process.argv[1]);console.log(x.risk_count||0)' "$RENDER_RESULT")"
+  AI_CARRIED_COUNT="$(node -e 'const x=JSON.parse(process.argv[1]);console.log(x.carried_count||0)' "$RENDER_RESULT")"
 
   mkdir -p "$ANALYSIS_ARCHIVE_DIR"
   cp "$STAGE_DIR/analysis.json" "$ANALYSIS_ARCHIVE_DIR/${STAMP}.json"
   cp "$STAGE_DIR/analysis.json" "$ANALYSIS_ARCHIVE_DIR/latest.json"
   cp "$STAGE_DIR/engineering-baseline.json" "$ANALYSIS_ARCHIVE_DIR/latest-baseline.json"
 
-  echo "Repository analysis completed: ${AI_RULE_COUNT} rule files, ${AI_RISK_COUNT} baseline findings."
+  # The carried count is reported rather than folded into the total: a run that found ten things
+  # and filed eight as not worth the fix is a different result from one that found two.
+  if [[ "${AI_CARRIED_COUNT}" -gt 0 ]]; then
+    echo "Repository analysis completed: ${AI_RULE_COUNT} rule files, ${AI_RISK_COUNT} baseline findings (${AI_CARRIED_COUNT} carried as not worth the fix)."
+  else
+    echo "Repository analysis completed: ${AI_RULE_COUNT} rule files, ${AI_RISK_COUNT} baseline findings."
+  fi
 else
   AI_STATUS="skipped"
 fi

@@ -495,7 +495,7 @@ Escritos por `init-project.sh`, salvo donde se indique.
 | `CLAUDE.md` | Las instrucciones de tu proyecto. El harness actualiza solo su propio bloque gestionado y preserva todo lo demás que escribiste. |
 | `.claude/rules/project-architecture.md` | El perfil de arquitectura que escribió Opus después de leer tu repositorio: módulos, fronteras, flujo de datos, invariantes. Este es el archivo que hace que el consejo sea específico en vez de genérico. |
 | `.claude/rules/harness-*.md` | Reglas condicionales que se cargan solo para paths que coinciden. Integridad del backend, fronteras de seguridad, estrategia de testing, y lo que el análisis haya juzgado que este repo necesita. |
-| `.claude/engineering-baseline.md` | La lista legible de riesgos de ingeniería conocidos, cada uno con un ID estable y un estado. Este es el archivo que leés vos. La retención está limitada a 20 hallazgos activos y 15 resueltos/obsoletos, descartando primero los de menor severidad, para que siga valiendo la pena leerlo. |
+| `.claude/engineering-baseline.md` | La lista legible de riesgos de ingeniería conocidos, cada uno con un ID estable y un estado. Este es el archivo que leés vos. La retención está limitada a 20 hallazgos activos, 10 cargados y 15 resueltos/obsoletos, descartando primero los de menor severidad, para que siga valiendo la pena leerlo. |
 | `.claude/engineering-baseline.json` | Los mismos hallazgos como estado de máquina. Existe para que un hallazgo conserve su identidad entre refreshes en vez de reescribirse como uno nuevo cada vez. |
 | `.claude/verify.sh` | El comando de verificación de este proyecto, generado desde el stack detectado. Editalo libremente: es tuyo. |
 | `.claude/preflight.sh` | Levanta la infraestructura local antes de que la verificación juzgue nada. Se genera solo si no tenés uno; un preflight propio nunca se sobrescribe, pero no se ejecuta hasta que lo apruebes — ver [Consentimiento](#consentimiento). |
@@ -701,6 +701,42 @@ system-wide por naturaleza inflaría al nivel máximo cada riesgo latente que ti
 
 Cada hallazgo renderizado lleva los ejes con los que se calificó, así podés discutir con los datos
 en vez de con el veredicto, y un hallazgo cuyos ejes nunca llegaron dice `NOT MEASURED`, no `LOW`.
+
+También lleva un ejemplo concreto: una corrida que termina mal, con un actor con nombre, el paso que
+falla y el estado incorrecto en que queda el sistema. Los ejes dicen qué tan grave sería la
+consecuencia, nunca qué es lo que sale mal, y con sólo una severidad no hay manera de decidir que un
+hallazgo no vale la pena. El ejemplo es lo que lo vuelve discutible. Un hallazgo que llegó sin uno
+se renderiza como `**Example.** Not provided.` en vez de leerse como si el mecanismo fuera obvio.
+
+### Real, y no vale el arreglo
+
+Los ejes miden el daño. Ninguno pregunta cuánto cuesta arreglarlo, así que una debilidad real pero
+trivial que exige un refactor transversal se imprimía igual que un bug de una línea — y un modelo al
+que le piden buscar riesgos llena los diez lugares que le dan. Los hallazgos que valían la pena
+perdían su señal entre los que nadie iba a tocar nunca.
+
+Por eso los hallazgos reportan un cuarto dato, y el harness lo cruza con la calificación:
+
+| `fix_cost` | Qué significa |
+|---|---|
+| `single_site` | Un archivo, un call site |
+| `contained` | Un módulo, tres archivos como máximo, sin cruzar ninguna frontera |
+| `invasive` | Cruza una frontera documentada, cambia un contrato público o un formato publicado, o revierte una política deliberada |
+
+Un hallazgo `low` cuyo arreglo es contained o invasive, y uno `medium` cuyo arreglo es invasive,
+quedan archivados bajo **Carried findings — not worth the fix**. Todo lo que esté en `high` o más
+arriba sigue siendo trabajo activo a cualquier costo: el daño manda, y el cruce sólo degrada la cola.
+
+Los hallazgos cargados quedan registrados, no borrados — con un conteo, porque una corrida que
+encontró diez cosas y cargó ocho es un resultado distinto de una que encontró dos. Tienen su propio
+presupuesto de retención de 10 en vez de competir por los 20 lugares activos, que es justamente el
+amontonamiento que el cruce viene a terminar. Un hallazgo cuyo costo de arreglo nunca llegó sigue
+siendo trabajo activo: nada se degrada por un dato que nadie aportó. Volvé a uno cuando estés
+cambiando esa zona igual, o cuando nueva evidencia suba su calificación.
+
+Los prompts también dicen que una lista vacía de hallazgos es una respuesta válida, y que de cero a
+tres es el resultado normal. Decirle a un modelo que no invente hallazgos no es lo mismo que decirle
+que no encontrar nada está permitido, y sólo la primera mitad estaba escrita.
 
 `ACCEPTED` existe para que un riesgo que decidiste cargar quede registrado como decisión, en lugar
 de expresarse desinflando los ejes en silencio. La calificación dice el riesgo; el estado dice la

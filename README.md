@@ -484,7 +484,7 @@ Written by `init-project.sh`, except where noted.
 | `CLAUDE.md` | Your project instructions. The harness updates only its own managed block and preserves everything else you wrote. |
 | `.claude/rules/project-architecture.md` | The architecture profile Opus wrote after reading your repository: modules, boundaries, data flow, invariants. This is the file that makes advice specific instead of generic. |
 | `.claude/rules/harness-*.md` | Conditional rules that load only for matching paths. Backend integrity, security boundaries, testing strategy, and whatever else the analysis judged this repo needs. |
-| `.claude/engineering-baseline.md` | The human-readable list of known engineering risks, each with a stable ID and a state. This is the file you read. Retention is capped at 20 active and 15 resolved/stale findings, lowest severity dropped first, so it stays worth reading. |
+| `.claude/engineering-baseline.md` | The human-readable list of known engineering risks, each with a stable ID and a state. This is the file you read. Retention is capped at 20 active, 10 carried and 15 resolved/stale findings, lowest severity dropped first, so it stays worth reading. |
 | `.claude/engineering-baseline.json` | The same findings as machine state. It exists so a finding keeps its identity across refreshes instead of being rewritten as a new one every time. |
 | `.claude/verify.sh` | The verification command for this project, generated from the stack it detected. Edit it freely — it is yours. |
 | `.claude/preflight.sh` | Brings up local infrastructure before verification judges anything. Generated only if you do not already have one; a custom preflight is never overwritten, but it is not run until you approve it — see [Consent](#consent). |
@@ -688,6 +688,41 @@ nature would inflate every latent risk it has to the top level.
 
 Each rendered finding carries the axes it was rated from, so you can argue with the inputs rather
 than the verdict, and a finding whose axes never arrived reads `NOT MEASURED` rather than `LOW`.
+
+It also carries a worked example: one concrete run that ends badly, with a named actor, the step
+that fails and the wrong state left behind. The axes say how bad the consequence would be, never
+what actually goes wrong, and a reader given only a severity has no way to decide a finding is not
+worth acting on. The example is what makes it arguable. A finding that arrived without one renders
+as `**Example.** Not provided.` rather than reading as though the mechanism were self-evident.
+
+### Real, and not worth the fix
+
+The axes measure harm. None of them asks what a fix costs, so a real but trivial weakness that would
+take a cross-cutting refactor to remove used to print exactly like a one-line bug — and a model
+asked to look for risks fills the ten slots it is given. The findings worth doing lost their signal
+among the ones nobody was ever going to do.
+
+Findings therefore report a fourth fact, and the harness crosses it with the rating:
+
+| `fix_cost` | What it means |
+|---|---|
+| `single_site` | One file, one call site |
+| `contained` | One module, at most three files, no boundary crossed |
+| `invasive` | Crosses a documented boundary, changes a public contract or shipped format, or reverses a deliberate policy |
+
+A `low` finding whose fix is contained or invasive, and a `medium` one whose fix is invasive, are
+filed under **Carried findings — not worth the fix**. Everything at `high` or above stays active
+work at any cost: harm wins, and the cross only ever demotes the tail.
+
+Carried findings are recorded, not deleted — with a count, because a run that found ten things and
+carried eight is a different result from one that found two. They keep their own retention budget of
+10 rather than competing for the 20 active slots, which is the crowding the cross exists to end.
+A finding whose fix cost never arrived stays active work: nothing is demoted on a fact nobody
+supplied. Revisit one when its area is being changed anyway, or when new evidence raises its rating.
+
+The prompts also state that an empty finding list is a valid answer, and that zero to three is the
+ordinary result. Telling a model not to invent findings is not the same as telling it that finding
+nothing is allowed, and only the first half was ever written down.
 
 `ACCEPTED` exists so that a risk you have decided to carry is recorded as a decision instead of
 being expressed by quietly understating the axes. The rating states the risk; the status states the

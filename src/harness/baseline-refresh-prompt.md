@@ -35,9 +35,34 @@ same finding gets the same level on every run and two projects' ratings mean the
 The schema defines each value. Choose the one the evidence supports; do not pick a harsher value to
 signal that a finding matters, or a milder one to signal that it is tolerated.
 
+## Is the finding worth acting on
+
+The three axes above measure harm only. Nothing in them says what removing the finding costs, so a
+real but trivial weakness that needs a cross-cutting refactor reads exactly like a one-line bug.
+Report that cost as `fix_cost` and the harness crosses the two: a `low` finding whose fix is
+contained or invasive is filed as carried rather than as work to do, while harm at `high` or above
+stays worth acting on however expensive the fix is.
+
+Cost the fix you actually wrote in `recommendation`, in files and call sites, not the ideal
+redesign you would prefer. This is the field that lets a finding be real and still not worth doing:
+use it instead of dropping the finding or softening its axes to keep it out of the report.
+
+## Making a finding judgeable
+
+A finding carries `detail` — the mechanism in causal order — and `example` — one concrete run that
+ends badly, with a named actor, the step that fails and the wrong state left behind. The rating says
+how bad the consequence would be; only the example says what goes wrong, which is what lets a reader
+decide the finding is not worth acting on.
+
+When reviewing an existing finding whose mechanism has not changed, restate the example already on
+record rather than inventing a different one. When it has changed, write the new one: the example
+must describe the code as it stands now, not as it stood when the finding was first written.
+
 
 ## Scope discipline
 
+- Most refreshes produce no new finding at all. An empty `new_findings` list is the expected result
+  of a routine change, not a failure to have looked.
 - Do not propose broad rewrites.
 - Do not revisit unrelated existing findings.
 - Do not change project architecture rules in this incremental pass.

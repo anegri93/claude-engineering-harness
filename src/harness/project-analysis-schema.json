@@ -90,16 +90,18 @@
           "impact": { "type": "string", "enum": ["data_loss", "security", "incorrect_result", "maintenance", "cosmetic"], "description": "What breaks if this goes wrong. data_loss: data destroyed, corrupted, or left inconsistent. security: a trust or authorization boundary is crossed or weakened. incorrect_result: the system returns a wrong answer, or silently skips work it reports having done. maintenance: it works, but is costly or dangerous to change. cosmetic: output, naming or documentation, with no behavioural consequence." },
           "trigger": { "type": "string", "enum": ["already_occurring", "normal_use", "specific_conditions", "hypothetical"], "description": "What must happen for the HARM to occur, not for the code path to run. already_occurring: observable right now in the tree or at runtime. normal_use: any ordinary use path reaches it. specific_conditions: needs a particular environment, timing or input. hypothetical: no known path today, a latent weakness. Example: an unpinned global install of a package at @latest runs on every initialization, but the harm needs a bad version to be published first, so it is hypothetical rather than already_occurring." },
           "blast_radius": { "type": "string", "enum": ["system_wide", "component", "local"], "description": "How far the consequence reaches. system_wide: every user, project or session. component: one module or subsystem. local: one file or call site." },
+          "fix_cost": { "type": "string", "enum": ["single_site", "contained", "invasive"], "description": "How much code the smallest fix — the one written in `recommendation` — actually touches. Count it from that fix; do not guess. single_site: one file, one call site. contained: one module, at most three files, no boundary crossed. invasive: crosses a documented boundary, changes a public contract or a shipped file format, or reverses a deliberate policy. A `single_site` cost beside a recommendation that names five files contradicts itself, so make the two agree." },
           "title": { "type": "string" },
-          "detail": { "type": "string" },
+          "detail": { "type": "string", "description": "The mechanism, in causal order: what happens first, what happens next, and where it goes wrong. Write the sequence, not a label for it. State plainly if the behaviour is deliberate, and cite the file and line where that decision is recorded." },
+          "example": { "type": "string", "description": "One concrete scenario that ends badly, in two or three sentences: a named actor, the specific action they take, the step that fails, and the wrong state the system is left in. Use this repository's own domain nouns and a plausible value, not placeholders. This is what lets a reader judge whether the finding is real, so it must describe a run that could actually happen here — never a restatement of the detail in other words, and never a hypothetical the code does not support." },
           "evidence_paths": {
             "type": "array",
             "maxItems": 8,
             "items": { "type": "string" }
           },
-          "recommendation": { "type": "string" }
+          "recommendation": { "type": "string", "description": "The smallest change that removes the harm, naming the files or call sites it touches. Say what already covers part of the problem and what is still uncovered. Prefer making the failure harmless over reversing a deliberate policy; if the policy itself has to change, say so and say why it is worth it." }
         },
-        "required": ["impact", "trigger", "blast_radius", "title", "detail", "evidence_paths", "recommendation"]
+        "required": ["impact", "trigger", "blast_radius", "fix_cost", "title", "detail", "example", "evidence_paths", "recommendation"]
       }
     },
     "confidence_notes": {

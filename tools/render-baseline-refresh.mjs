@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs'
 import path from 'node:path'
-import { severityOf, resolveSeverity, severityRank, severityLabel, UNRATED } from './severity.mjs'
+import { severityOf, resolveSeverity, severityRank, severityLabel, verdictOf, CARRY, UNRATED } from './severity.mjs'
 
 function parseArgs(argv) {
   const out = {}
@@ -36,11 +36,20 @@ function titleKey(v) { return text(v).toLowerCase().replace(/[^a-z0-9]+/g,' ').t
 // oldest-first within a severity so the visible set stays stable between refreshes.
 const MAX_ACTIVE_FINDINGS = 20
 const MAX_ARCHIVED_FINDINGS = 15
+// Carried findings get their own budget rather than competing for the 20. They are the cheapest
+// thing in the baseline to lose — a full reanalysis finds them again — and letting them consume
+// slots would reproduce exactly the crowding the verdict exists to end.
+const MAX_CARRIED_FINDINGS = 10
 // `accepted` is archived, not active: the risk is real and the project decided to carry it, so it
 // stays on the record without nagging from the section that asks for action every session.
 const ARCHIVED_STATUSES = ['resolved','stale','accepted']
 const findingRank = f => severityRank(resolveSeverity(f).severity)
 const isArchived = f => ARCHIVED_STATUSES.includes(text(f.status))
+// A finding the harness decided is not worth the fix is neither active work nor archived history.
+// `accepted` remains the human counterpart: the harness computes `carry` from harm and cost, a
+// person sets `accepted` when the project has decided in writing to live with something.
+const isCarried = f => !isArchived(f) && verdictOf(f) === CARRY
+const isActive = f => !isArchived(f) && !isCarried(f)
 
 function capFindings(findings, max) {
   if (findings.length <= max) return { kept: findings, dropped: 0 }
@@ -79,6 +88,7 @@ for(const review of Array.isArray(refresh.finding_reviews) ? refresh.finding_rev
     impact:text(review?.impact)||text(target.impact),
     trigger:text(review?.trigger)||text(target.trigger),
     blast_radius:text(review?.blast_radius)||text(target.blast_radius),
+    fix_cost:text(review?.fix_cost)||text(target.fix_cost),
   }
   const rated=severityOf(axes)
   const next={
@@ -90,6 +100,10 @@ for(const review of Array.isArray(refresh.finding_reviews) ? refresh.finding_rev
     severity:rated!==UNRATED ? rated : (text(target.severity)||UNRATED),
     title:text(review?.title)||target.title||'Finding',
     detail:text(review?.detail)||target.detail||'',
+    // A review restates a finding; it is not obliged to re-derive the scenario. Falling back to
+    // the stored example keeps a routine 'still open' from erasing the one thing that made the
+    // finding judgeable, the same way detail already falls back.
+    example:text(review?.example)||target.example||'',
     evidence_paths:list(review?.evidence_paths,10).map(safePath).filter(Boolean),
     recommendation:text(review?.recommendation),
     resolution:text(review?.resolution),
@@ -120,9 +134,11 @@ for(const nf of Array.isArray(refresh.new_findings) ? refresh.new_findings : [])
     impact:text(nf?.impact),
     trigger:text(nf?.trigger),
     blast_radius:text(nf?.blast_radius),
+    fix_cost:text(nf?.fix_cost),
     severity:severityOf(nf),
     title,
     detail:text(nf?.detail),
+    example:text(nf?.example),
     evidence_paths:list(nf?.evidence_paths,10).map(safePath).filter(Boolean),
     recommendation:text(nf?.recommendation),
     resolution:'',
@@ -142,11 +158,12 @@ if (Boolean(refresh.full_reanalysis_recommended)) {
   current.full_reanalysis_reason = text(current.full_reanalysis_reason)
 }
 
-const activeCap=capFindings(current.findings.filter(f=>!isArchived(f)), MAX_ACTIVE_FINDINGS)
+const activeCap=capFindings(current.findings.filter(isActive), MAX_ACTIVE_FINDINGS)
+const carriedCap=capFindings(current.findings.filter(isCarried), MAX_CARRIED_FINDINGS)
 const archivedCap=capFindings(current.findings.filter(isArchived), MAX_ARCHIVED_FINDINGS)
-const pruned=activeCap.dropped+archivedCap.dropped
+const pruned=activeCap.dropped+carriedCap.dropped+archivedCap.dropped
 if(pruned) {
-  const retained=new Set([...activeCap.kept, ...archivedCap.kept])
+  const retained=new Set([...activeCap.kept, ...carriedCap.kept, ...archivedCap.kept])
   current.findings=current.findings.filter(f=>retained.has(f))
 }
 
@@ -171,11 +188,15 @@ function renderFinding(lines,f) {
   lines.push('')
   if(text(f.detail)) lines.push(text(f.detail))
   lines.push('')
+  lines.push(text(f.example) ? `**Example.** ${text(f.example).replace(/\s+/g,' ')}` : '**Example.** Not provided.')
+  lines.push('')
   lines.push(`- Evidence: ${evidence(f.evidence_paths)}`)
   // Show the axes the rating came from, so a reader can argue with the inputs rather than the verdict.
   if(text(f.impact)&&text(f.trigger)) lines.push(`- Rated: ${text(f.impact)} × ${text(f.trigger)} × ${text(f.blast_radius)||'component'}`)
   else if(legacy) lines.push('- Rated: carried over from a baseline written before severity axes existed; not re-measured')
   else lines.push('- Rated: not measured')
+  // The other half of the carried verdict, shown so a reader can argue with the input.
+  if(text(f.fix_cost)) lines.push(`- Fix cost: ${text(f.fix_cost)}`)
   if(text(f.recommendation)) lines.push(`- Incremental recommendation: ${text(f.recommendation).replace(/\s+/g,' ')}`)
   if(text(f.resolution)) lines.push(`- Resolution note: ${text(f.resolution).replace(/\s+/g,' ')}`)
   lines.push('')
@@ -192,12 +213,21 @@ lines.push('## System','',text(current.system_summary),'','## Architecture','',t
 if(current.full_reanalysis_recommended) {
   lines.push('> **Full harness reanalysis recommended.** ' + (text(current.full_reanalysis_reason)||'Recent changes appear to alter architecture or project-wide rules.'),'')
 }
-const active=current.findings.filter(f=>!ARCHIVED_STATUSES.includes(text(f.status)))
+const active=current.findings.filter(isActive)
 lines.push('## Active findings','')
 if(active.length) {
   active.sort((a,b)=>findingRank(a)-findingRank(b))
   for(const f of active) renderFinding(lines,f)
 } else lines.push('No active engineering findings are currently recorded.','')
+const carried=current.findings.filter(isCarried)
+if(carried.length) {
+  carried.sort((a,b)=>findingRank(a)-findingRank(b))
+  lines.push('## Carried findings — not worth the fix','')
+  // Counted out loud rather than silently omitted: absence is not data, and a reader has to be
+  // able to see that these were measured and set aside, not that nothing was found.
+  lines.push(`${carried.length} finding(s) are real but cost more to remove than the harm they carry. They are recorded, not scheduled. Revisit one when its area is being changed anyway, or when new evidence raises its rating.`,'')
+  for(const f of carried) renderFinding(lines,f)
+}
 const resolvedFindings=current.findings.filter(f=>text(f.status)==='resolved')
 if(resolvedFindings.length) { lines.push('## Resolved findings',''); for(const f of resolvedFindings) renderFinding(lines,f) }
 const staleFindings=current.findings.filter(f=>text(f.status)==='stale')
@@ -220,4 +250,4 @@ lines.push('A full architecture/rule regeneration still comes from `~/.claude/ha
 
 fs.writeFileSync(path.join(outDir,'engineering-baseline.md'),lines.join('\n'))
 fs.writeFileSync(path.join(outDir,'engineering-baseline.json'),JSON.stringify(current,null,2)+'\n')
-console.log(JSON.stringify({changed:hasChanged,updated,resolved,changed_findings:changedCount,stale,added,pruned,full_reanalysis_recommended:current.full_reanalysis_recommended,summary:text(refresh.summary)}))
+console.log(JSON.stringify({changed:hasChanged,updated,resolved,changed_findings:changedCount,stale,added,pruned,carried:current.findings.filter(isCarried).length,full_reanalysis_recommended:current.full_reanalysis_recommended,summary:text(refresh.summary)}))

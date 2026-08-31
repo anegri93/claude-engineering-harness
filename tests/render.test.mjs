@@ -610,3 +610,277 @@ test('a review that omits the axes keeps the ones the finding already carried', 
   assert.match(markdown, /- Rated: security × specific_conditions × component/)
   assert.doesNotMatch(markdown, /- Rated: not measured/)
 })
+
+// A finding is only actionable if the reader can tell a real risk from a plausible-sounding
+// one, and severity plus abstract impact prose does not let them: the axes say how bad it
+// would be, never what actually goes wrong. So a finding carries a worked example — one
+// scenario, a named actor, the wrong ending — and both renderers write it. Requested after a
+// real baseline whose findings could not be judged without rewriting each one by hand.
+test('a finding carries its worked example into the baseline', t => {
+  const dir = workspace(t)
+  const box = renderAnalysis(dir, {
+    ...MINIMAL_ANALYSIS,
+    risks: [{
+      title: 'Fail-closed audit turns a success into a 500',
+      detail: 'The handler writes to Mongo, then the interceptor writes the audit row, and only then does the response leave.',
+      example: 'HR assigns a benefit to Juan. Mongo stores it. Mongo hiccups on the audit insert, so the caller sees HTTP 500, retries, and Juan now holds the benefit twice.',
+      impact: 'data_loss',
+      trigger: 'specific_conditions',
+      blast_radius: 'component',
+      evidence_paths: ['src/auditoria/auditoria.interceptor.ts'],
+      recommendation: 'Keep the policy; make the retry harmless with a unique index on the natural key.'
+    }]
+  })
+  const markdown = box.read('engineering-baseline.md')
+  assert.match(markdown, /Juan now holds the benefit twice/, 'the example never reached the rendered baseline')
+  assert.equal(
+    box.state().findings[0].example,
+    'HR assigns a benefit to Juan. Mongo stores it. Mongo hiccups on the audit insert, so the caller sees HTTP 500, retries, and Juan now holds the benefit twice.',
+    'the example was not persisted, so the next refresh would drop it'
+  )
+})
+
+// The refresh renderer is the one that runs for the rest of the project's life. A new finding
+// it adds must carry an example too, and a review that restates a finding must not blank the
+// example the initial analysis wrote — `detail` already falls back to the stored value for
+// exactly that reason.
+test('a refreshed baseline keeps examples on new findings and on reviewed ones', t => {
+  const dir = workspace(t)
+  const current = {
+    findings: [{
+      id: 'F001',
+      status: 'open',
+      title: 'Existing finding',
+      detail: 'Mechanism.',
+      example: 'The example the first analysis wrote.',
+      impact: 'security',
+      trigger: 'normal_use',
+      blast_radius: 'component',
+      severity: 'high',
+      evidence_paths: ['src/a.ts'],
+      recommendation: 'Fix it.',
+      resolution: ''
+    }],
+    next_finding_id: 2
+  }
+  const box = renderRefresh(dir, current, {
+    finding_reviews: [{
+      finding_id: 'F001',
+      status: 'open',
+      title: 'Existing finding',
+      detail: 'Mechanism, restated.',
+      impact: 'security',
+      trigger: 'normal_use',
+      blast_radius: 'component',
+      evidence_paths: ['src/a.ts'],
+      recommendation: 'Fix it.',
+      resolution: ''
+    }],
+    new_findings: [{
+      title: 'Freshly found',
+      detail: 'A new mechanism.',
+      example: 'A cron fires twice at midnight and the payroll export is written twice.',
+      impact: 'incorrect_result',
+      trigger: 'specific_conditions',
+      blast_radius: 'component',
+      evidence_paths: ['src/b.ts'],
+      recommendation: 'Guard it.'
+    }],
+    full_reanalysis_recommended: false,
+    full_reanalysis_reason: '',
+    summary: 'One new finding.'
+  })
+  const reviewed = box.state.findings.find(f => f.id === 'F001')
+  assert.equal(reviewed.example, 'The example the first analysis wrote.',
+    'a review with no example blanked the one already on record')
+  const added = box.state.findings.find(f => f.title === 'Freshly found')
+  assert.equal(added.example, 'A cron fires twice at midnight and the payroll export is written twice.')
+  assert.match(box.markdown, /payroll export is written twice/,
+    'the new finding rendered without its example')
+})
+
+// The schemas are the only place the model is told what to write. A field the renderers read
+// but nothing asks for arrives empty on every real run, which is how `detail` and
+// `recommendation` ended up as free-form strings with no contract at all.
+test('both schemas ask for the example and say what a good one looks like', () => {
+  const schemaDir = path.join(TOOLS, '..', 'src', 'harness')
+  const analysis = JSON.parse(fs.readFileSync(path.join(schemaDir, 'project-analysis-schema.json'), 'utf8'))
+  const refresh = JSON.parse(fs.readFileSync(path.join(schemaDir, 'baseline-refresh-schema.json'), 'utf8'))
+  const shapes = [
+    ['risks', analysis.properties.risks.items],
+    ['finding_reviews', refresh.properties.finding_reviews.items],
+    ['new_findings', refresh.properties.new_findings.items]
+  ]
+  for (const [name, shape] of shapes) {
+    assert.ok(shape.properties.example, `${name} has no example field`)
+    assert.ok(shape.required.includes('example'), `${name} does not require an example`)
+    for (const field of ['detail', 'example', 'recommendation']) {
+      assert.ok((shape.properties[field].description ?? '').length > 80,
+        `${name}.${field} is a free-form string with no contract`)
+    }
+  }
+})
+
+// --- carried findings: real, and not worth the fix ---------------------------
+//
+// Ten harm-rated slots filled on every run, with nothing distinguishing a one-line fix from a
+// cross-cutting refactor, meant the findings worth doing were read alongside the ones nobody was
+// ever going to do. `fix_cost` crosses harm with cost and files the tail separately. The failure
+// this section guards is the quiet one: a carried finding that vanishes instead of being recorded,
+// or one that keeps consuming an active slot as though nothing had changed.
+
+const LOW_COSTLY = { impact: 'maintenance', trigger: 'hypothetical', blast_radius: 'component', fix_cost: 'invasive' }
+const HIGH_COSTLY = { impact: 'security', trigger: 'already_occurring', blast_radius: 'component', fix_cost: 'invasive' }
+
+test('the initial baseline files a real but not-worth-fixing finding away from the active list', t => {
+  const dir = workspace(t)
+  const { read, state, result } = renderAnalysis(dir, {
+    ...MINIMAL_ANALYSIS,
+    risks: [
+      { ...HIGH_COSTLY, title: 'Token logged in plain text', detail: 'd', example: 'e', evidence_paths: ['src/a.ts'], recommendation: 'r' },
+      { ...LOW_COSTLY, title: 'Duplicated glob list', detail: 'd', example: 'e', evidence_paths: ['src/b.ts'], recommendation: 'r' }
+    ]
+  })
+  // The finding is kept, not dropped: deleting it would make the analysis unreproducible and hide
+  // that it was measured at all.
+  assert.equal(state().findings.length, 2)
+  assert.equal(state().findings.find(fi => fi.title === 'Duplicated glob list').fix_cost, 'invasive')
+  assert.equal(result.carried_count, 1, 'the carried count is not reported, so a caller cannot tell the two results apart')
+
+  const md = read('engineering-baseline.md')
+  assert.match(md, /## Carried findings — not worth the fix/)
+  assert.match(md, /1 finding\(s\) are real but cost more to remove/, 'the carried findings are not counted out loud')
+  const active = md.slice(md.indexOf('## Active findings'), md.indexOf('## Carried findings'))
+  assert.match(active, /Token logged in plain text/, 'an actionable finding was filed as carried')
+  assert.doesNotMatch(active, /Duplicated glob list/, 'a carried finding still nags from the active list')
+  assert.match(md, /- Fix cost: invasive/, 'the cost behind the verdict is not shown, so a reader cannot argue with it')
+})
+
+test('the initial baseline renders no carried section when every finding is worth acting on', t => {
+  const dir = workspace(t)
+  const { read, result } = renderAnalysis(dir, {
+    ...MINIMAL_ANALYSIS,
+    risks: [{ ...HIGH_COSTLY, title: 'Token logged in plain text', detail: 'd', example: 'e', evidence_paths: ['src/a.ts'], recommendation: 'r' }]
+  })
+  assert.equal(result.carried_count, 0)
+  assert.doesNotMatch(read('engineering-baseline.md'), /## Carried findings/)
+})
+
+test('a refreshed baseline files a carried finding into its own section', t => {
+  const dir = workspace(t)
+  const current = { version: 2, findings: [finding('F001', 'high')] }
+  const { state, markdown, result } = renderRefresh(dir, current, {
+    new_findings: [{ ...LOW_COSTLY, title: 'Duplicated glob list', detail: 'd', example: 'e', evidence_paths: ['src/b.ts'], recommendation: 'r' }]
+  })
+  assert.equal(result.carried, 1, 'the refresh does not report how many findings it filed as carried')
+  assert.equal(state.findings.find(f => f.title === 'Duplicated glob list').fix_cost, 'invasive')
+  assert.match(markdown, /## Carried findings — not worth the fix/)
+  const active = markdown.slice(markdown.indexOf('## Active findings'), markdown.indexOf('## Carried findings'))
+  assert.doesNotMatch(active, /Duplicated glob list/, 'a carried finding still nags from the active list')
+})
+
+test('carried findings do not consume the twenty active slots', t => {
+  const dir = workspace(t)
+  const findings = []
+  // Twenty findings worth acting on, plus five real ones nobody would pay to remove. Before the
+  // verdict existed the cheap ones competed for the same twenty slots and pushed the tail out.
+  for (let i = 1; i <= 20; i++) findings.push(finding(`F${String(i).padStart(3, '0')}`, 'high', HIGH_COSTLY))
+  for (let i = 21; i <= 25; i++) findings.push(finding(`F${String(i).padStart(3, '0')}`, 'low', LOW_COSTLY))
+  const { state, result } = renderRefresh(dir, { version: 2, findings }, {})
+  assert.equal(result.pruned, 0, 'the carried findings were pruned as though they were active work')
+  assert.equal(state.findings.length, 25)
+})
+
+test('carried findings are capped on their own budget', t => {
+  const dir = workspace(t)
+  const findings = []
+  for (let i = 1; i <= 14; i++) findings.push(finding(`F${String(i).padStart(3, '0')}`, 'low', LOW_COSTLY))
+  findings.push(finding('F015', 'high', HIGH_COSTLY))
+  const { state, result } = renderRefresh(dir, { version: 2, findings }, {})
+  // The baseline is loaded as context in every session, so the carried tail is bounded too.
+  assert.equal(result.pruned, 4)
+  assert.equal(state.findings.filter(f => f.fix_cost === 'invasive' && f.severity === 'low').length, 10)
+  assert.ok(state.findings.some(f => f.id === 'F015'), 'the actionable finding was pruned with the carried tail')
+})
+
+test('a review that omits the fix cost keeps the one the finding already carried', t => {
+  const dir = workspace(t)
+  // The same fallback the other axes get: a review restating a finding is not re-measuring it, and
+  // an empty cost would promote a carried finding back into the active list on every routine Stop.
+  const current = { version: 2, findings: [finding('F001', 'low', LOW_COSTLY)] }
+  const { state, markdown } = renderRefresh(dir, current, {
+    finding_reviews: [{
+      finding_id: 'F001', status: 'open',
+      title: 'Finding F001', detail: 'still there', example: 'e',
+      evidence_paths: ['src/a.ts'], recommendation: 'r', resolution: ''
+    }]
+  })
+  assert.equal(state.findings[0].fix_cost, 'invasive')
+  assert.match(markdown, /## Carried findings — not worth the fix/)
+})
+
+test('a review can raise a carried finding back into the active list', t => {
+  const dir = workspace(t)
+  const current = { version: 2, findings: [finding('F001', 'low', LOW_COSTLY)] }
+  const { state, markdown } = renderRefresh(dir, current, {
+    finding_reviews: [{
+      finding_id: 'F001', status: 'changed',
+      impact: 'security', trigger: 'already_occurring', blast_radius: 'component', fix_cost: 'invasive',
+      title: 'Finding F001', detail: 'the harm turned out to be reachable', example: 'e',
+      evidence_paths: ['src/a.ts'], recommendation: 'r', resolution: ''
+    }]
+  })
+  assert.equal(state.findings[0].severity, 'critical')
+  assert.doesNotMatch(markdown, /## Carried findings/, 'a finding whose harm rose is still filed as not worth the fix')
+  assert.match(markdown, /## Active findings/)
+})
+
+test('a legacy baseline with no fix cost keeps every finding as active work', t => {
+  const dir = workspace(t)
+  // Absence is not data: a baseline written before this axis existed must not have its whole tail
+  // silently demoted out of the section that asks for action.
+  const findings = [finding('F001', 'low'), finding('F002', 'medium')]
+  const { markdown } = renderRefresh(dir, { version: 2, findings }, {})
+  assert.doesNotMatch(markdown, /## Carried findings/)
+  assert.match(markdown, /Finding F001/)
+  assert.match(markdown, /Finding F002/)
+})
+
+test('both schemas ask for the fix cost and the prompts say how to cost it', () => {
+  const schemaDir = path.join(TOOLS, '..', 'src', 'harness')
+  const analysis = JSON.parse(fs.readFileSync(path.join(schemaDir, 'project-analysis-schema.json'), 'utf8'))
+  const refresh = JSON.parse(fs.readFileSync(path.join(schemaDir, 'baseline-refresh-schema.json'), 'utf8'))
+  const shapes = [
+    ['risks', analysis.properties.risks.items],
+    ['finding_reviews', refresh.properties.finding_reviews.items],
+    ['new_findings', refresh.properties.new_findings.items]
+  ]
+  for (const [name, shape] of shapes) {
+    assert.ok(shape.properties.fix_cost, `${name} has no fix_cost field`)
+    assert.ok(shape.required.includes('fix_cost'), `${name} does not require a fix cost`)
+    assert.ok((shape.properties.fix_cost.description ?? '').length > 80,
+      `${name}.fix_cost is an enum with no written scale, which is the drift severity already had`)
+  }
+  // A schema field the prompt never explains arrives guessed rather than counted.
+  for (const name of ['project-analysis-prompt.md', 'baseline-refresh-prompt.md']) {
+    const prompt = fs.readFileSync(path.join(schemaDir, name), 'utf8')
+    assert.match(prompt, /fix_cost/, `${name} never mentions the fix cost it asks the model to report`)
+    assert.match(prompt, /worth acting on/i, `${name} does not tell the model what the cost is used for`)
+  }
+})
+
+test('both prompts say that finding nothing is a valid answer', () => {
+  // Models fill an array to its ceiling. Forbidding invention is not the same as authorizing an
+  // empty result, and nothing in the prompts said the second thing.
+  const schemaDir = path.join(TOOLS, '..', 'src', 'harness')
+  assert.match(
+    fs.readFileSync(path.join(schemaDir, 'project-analysis-prompt.md'), 'utf8'),
+    /empty `risks` list/,
+    'the analysis prompt never says an empty finding list is acceptable'
+  )
+  assert.match(
+    fs.readFileSync(path.join(schemaDir, 'baseline-refresh-prompt.md'), 'utf8'),
+    /empty `new_findings` list/,
+    'the refresh prompt never says an empty finding list is acceptable'
+  )
+})
