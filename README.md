@@ -343,7 +343,7 @@ it does not know is *how this repository tests*. That part is read out of the re
 
 ```mermaid
 flowchart LR
-    A["init-project.sh"] --> B["detect the stack<br/>package.json · pytest · go.mod · Cargo.toml"]
+    A["init-project.sh"] --> B["detect the stack<br/>package.json · pytest · go.mod · Cargo.toml · node --test"]
     B --> C["detect the test tooling<br/>Vitest · Jest · Playwright · pytest …"]
     A --> D["Opus 5 reads tests and test configuration<br/>read-only, JSON-schema output"]
     D --> E["rule_groups[]<br/>each with its own paths globs"]
@@ -377,6 +377,7 @@ lockfile. It does not invent one, and it does not treat your suite as optional.
 | Python | `pytest`, if installed |
 | `go.mod` | `go test ./...` |
 | `Cargo.toml` | `cargo test` |
+| `*.test.mjs` with no manifest | `node --test`, for a repository that ships no `package.json` by design |
 | none of those | a stub that exits 3 and asks you to customize it, rather than pretending to verify |
 
 Steps you do not have are skipped, not faked. A project with only `lint` and `test` runs exactly
@@ -391,7 +392,7 @@ never ran" rather than "a check that failed". Two shipped comments once claimed 
 asserted something, for months, while the file did not exist.
 
 So the suite tests the scripts as real subprocesses against a throwaway `HOME`, because the risk
-they carry is what they do to a real config file on a real disk. **120 tests across 12 files**, no
+they carry is what they do to a real config file on a real disk. **121 tests across 12 files**, no
 dependencies, nothing but Node 20+ required:
 
 ```bash
@@ -571,6 +572,7 @@ run, and a later `git pull` can change it. That is the same trust you extend to 
 | Python | `ruff check`, `mypy`, `pytest` — whichever are installed. |
 | `go.mod` | `go vet ./...`, `go test ./...` |
 | `Cargo.toml` | `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test` |
+| `*.test.mjs` with no manifest | `node --test`. Checked after the manifests above, so a repository carrying both verifies as the stack it declares. |
 | none of those | A stub that exits 3 and asks you to customize it, rather than pretending to verify. |
 
 Independently of the stack, a repository containing a `Dockerfile` also gets linted with hadolint
@@ -730,7 +732,7 @@ src/
 
 project-template/              CLAUDE.md · verify.sh · preflight.sh · architecture rule
 tools/                         init-project.sh · refresh-baseline.sh · renderers · settings I/O
-tests/                         120 tests, node:test, no dependencies
+tests/                         121 tests, node:test, no dependencies
 ```
 
 `src/`, `project-template/` and `tools/` are the installable payload. Both `install.sh` and

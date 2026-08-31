@@ -350,7 +350,7 @@ durante `init-project.sh`:
 
 ```mermaid
 flowchart LR
-    A["init-project.sh"] --> B["detecta el stack<br/>package.json · pytest · go.mod · Cargo.toml"]
+    A["init-project.sh"] --> B["detecta el stack<br/>package.json · pytest · go.mod · Cargo.toml · node --test"]
     B --> C["detecta el tooling de tests<br/>Vitest · Jest · Playwright · pytest …"]
     A --> D["Opus 5 lee tests y su configuración<br/>solo lectura, salida por JSON Schema"]
     D --> E["rule_groups[]<br/>cada uno con sus propios globs de paths"]
@@ -386,6 +386,7 @@ indica tu lockfile. No inventa uno, y no trata tu suite como opcional.
 | Python | `pytest`, si está instalado |
 | `go.mod` | `go test ./...` |
 | `Cargo.toml` | `cargo test` |
+| `*.test.mjs` sin manifiesto | `node --test`, para un repositorio que no lleva `package.json` por diseño |
 | ninguno de esos | un stub que sale con 3 y te pide personalizarlo, en vez de fingir que verifica |
 
 Los pasos que no tenés se saltean, no se simulan. Un proyecto con solo `lint` y `test` corre
@@ -401,7 +402,7 @@ durante meses que cierto archivo de tests verificaba algo, mientras el archivo n
 
 Por eso la suite testea los scripts como subprocesos reales contra un `HOME` descartable, porque el
 riesgo que cargan es lo que le hacen a un archivo de configuración real en un disco real.
-**120 tests en 12 archivos**, sin dependencias, sin nada más que Node 20+:
+**121 tests en 12 archivos**, sin dependencias, sin nada más que Node 20+:
 
 ```bash
 node --test tests/*.test.mjs
@@ -581,6 +582,7 @@ vos, y un `git pull` posterior puede cambiarlo. Es la misma confianza que le ext
 | Python | `ruff check`, `mypy`, `pytest` — los que estén instalados. |
 | `go.mod` | `go vet ./...`, `go test ./...` |
 | `Cargo.toml` | `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test` |
+| `*.test.mjs` sin manifiesto | `node --test`. Se evalúa después de los manifiestos de arriba, así un repositorio que lleve ambos se verifica como el stack que declara. |
 | ninguno de esos | Un stub que sale con 3 y te pide personalizarlo, en vez de fingir que verifica. |
 
 Independientemente del stack, un repositorio con `Dockerfile` también se lintea con hadolint antes
@@ -744,7 +746,7 @@ src/
 
 project-template/              CLAUDE.md · verify.sh · preflight.sh · regla de arquitectura
 tools/                         init-project.sh · refresh-baseline.sh · renderers · I/O de settings
-tests/                         120 tests, node:test, sin dependencias
+tests/                         121 tests, node:test, sin dependencias
 ```
 
 `src/`, `project-template/` y `tools/` son el payload instalable. Tanto `install.sh` como

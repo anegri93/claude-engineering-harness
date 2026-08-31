@@ -203,3 +203,15 @@ test('the one-shot initializer asks for the record and stops what it started', {
   // Never fatal: verification has already been decided by the time this runs.
   assert.match(body, /Could not stop Supabase; stop it by hand/)
 })
+
+// A dependency-free Node repository ships no package.json by design — this harness is one.
+// Before this test the stack read as Generic, verify.sh degraded to exit 3, and the Stop gate
+// could never be earned: hand-editing verify.sh does not help, because init regenerates it.
+test('a dependency-free Node repository verifies with the built-in test runner', { skip }, t => {
+  const { verify, body } = fixture(t, {
+    'tests/thing.test.mjs': 'import{test}from"node:test";test("ok",()=>{})\n'
+  })
+  assertUsableScript(verify, body)
+  assert.match(body, /node --test/, 'a repo with node test files does not use the built-in runner')
+  assert.doesNotMatch(body, /exit 3/, 'a repo with a real test strategy still degrades to exit 3')
+})

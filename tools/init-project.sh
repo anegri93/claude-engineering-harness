@@ -329,6 +329,24 @@ NODE_META_EOF
   [[ -f pnpm-workspace.yaml ]] && MONOREPO=true
 fi
 
+# A dependency-free Node repository ships no package.json by design — this harness is one.
+# Without a manifest the stack read as Generic and verify.sh degraded to exit 3, so the Stop
+# gate could never be earned, and editing verify.sh by hand did not help because the next run
+# regenerates it. Node's own test runner is the strategy such a repository already has.
+#
+# This runs before the manifest checks below on purpose: a repository that also ships
+# pyproject.toml, go.mod or Cargo.toml is that stack, and those lines overwrite PROJECT_KIND.
+# `head -n 1` rather than `find -quit`, which is not portable across the userlands this targets.
+NODE_TEST_FILES=false
+if [[ ! -f package.json ]] && command -v node >/dev/null 2>&1; then
+  if [[ -n "$(find . \( -name node_modules -o -name .git \) -prune -o -type f \
+        \( -name '*.test.mjs' -o -name '*.test.js' -o -name '*.test.cjs' \) -print 2>/dev/null | head -n 1)" ]]; then
+    NODE_TEST_FILES=true
+    PROJECT_KIND="Node.js"
+    STACK_ITEMS+=("Node.js (no package manager)")
+  fi
+fi
+
 if [[ -f pyproject.toml ]]; then PROJECT_KIND="Python"; STACK_ITEMS+=("Python"); fi
 if [[ -f go.mod ]]; then PROJECT_KIND="Go"; STACK_ITEMS+=("Go"); fi
 if [[ -f Cargo.toml ]]; then PROJECT_KIND="Rust"; STACK_ITEMS+=("Rust"); fi
@@ -1029,6 +1047,18 @@ echo "==> cargo fmt --check"; cargo fmt --check
 echo "==> cargo clippy"; cargo clippy --all-targets --all-features -- -D warnings
 echo "==> cargo test"; cargo test
 RUST_VERIFY_EOF
+elif [[ "$NODE_TEST_FILES" == true ]]; then
+  # Last before the generic fallback, so a repository carrying both a real manifest and stray
+  # *.test.mjs files verifies as the stack its manifest declares.
+  cat > "$VERIFY_FILE" <<'NODE_TEST_VERIFY_EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+if [[ "${HARNESS_PREFLIGHT_DONE:-0}" != "1" && -x .claude/preflight.sh ]]; then echo "==> environment preflight"; .claude/preflight.sh; fi
+command -v node >/dev/null 2>&1 || { echo "Required command not found: node" >&2; exit 127; }
+echo "==> node --test"
+node --test
+NODE_TEST_VERIFY_EOF
 else
   cat > "$VERIFY_FILE" <<'GENERIC_VERIFY_EOF'
 #!/usr/bin/env bash
