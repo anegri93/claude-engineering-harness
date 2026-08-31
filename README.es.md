@@ -454,7 +454,8 @@ Una sesión que verificablemente no cambió nada saltea la verificación. "No ca
 commitea deja el árbol limpio, y se verifica igual.
 
 **El preflight** revisa si Docker está instalado pero apagado, si existe `supabase/config.toml` con
-el stack caído, y si el repo realmente referencia Docker Compose. Las dos esperas son acotadas y
+el stack caído, y si el repo realmente referencia Docker Compose — en `package.json`, bajo
+`scripts/`, o en un `*.sh` o `Makefile` de la raíz. Las dos esperas son acotadas y
 configurables:
 
 ```bash

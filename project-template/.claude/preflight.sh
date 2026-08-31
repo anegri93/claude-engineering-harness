@@ -140,6 +140,13 @@ project_references_compose() {
   if [[ -d scripts ]] && grep -R -E -q 'docker[ -]compose|docker compose' scripts --exclude-dir=node_modules 2>/dev/null; then
     return 0
   fi
+  # The launcher usually sits in the root, not under scripts/: a repository whose start.sh
+  # runs `docker compose up -d` was read as having no stack at all, so the preflight started
+  # Docker, left the database down, and reported "passed" — after which every database-backed
+  # test failed on a connect timeout and the gate blamed the code.
+  if grep -E -q 'docker[ -]compose|docker compose' ./*.sh Makefile 2>/dev/null; then
+    return 0
+  fi
   return 1
 }
 

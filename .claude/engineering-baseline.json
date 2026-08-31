@@ -242,18 +242,22 @@
     },
     {
       "id": "F009",
-      "status": "open",
-      "severity": "low",
+      "status": "accepted",
+      "severity": "high",
       "title": "`.claude/verify.sh` is executed on every Stop with no integrity check, while `preflight.sh` is hash-pinned",
-      "detail": "The consent model records an approval hash for a custom `preflight.sh` and withdraws it when the file changes, but `verify.sh` — which the Stop hook executes on every task once the project is adopted — has no equivalent. `init-project.sh` regenerates `verify.sh` from the detected stack rather than adopting the repository's, which closes the clone case, but a later `git pull` in an adopted repository can replace it and it will run unchallenged. The README states this is out of scope by design, comparing it to trusting a `Makefile`.",
+      "detail": "Code evidence is unchanged by this task: `tools/init-project.sh:913-971` still hash-pins a custom `preflight.sh` (`preflight-approved` in the runtime state dir, withdrawn on edit), while `verify.sh` is regenerated and then executed on every Stop with no recorded hash. What changed is the status, not the risk. README.md:560-562 states the boundary in writing — \"once you have adopted a repository, its `verify.sh` is a script you run, and a later `git pull` can change it. That is the same trust you extend to a `Makefile` or a `package.json` script — the harness does not add a second layer over it\" — and CHANGELOG.md:7 records that the `accepted` status was added precisely because \"this repository's own documented `verify.sh` trust boundary came back rated `low`\" when the only way to express a carried risk was to understate it. The rating now states the risk (a repository-shipped script executing with the user's credentials after an adopted repo is updated) and the status states the decision.",
       "evidence_paths": [
+        "README.md",
+        "CHANGELOG.md",
         "tools/init-project.sh",
         "src/hooks/verify-project.sh",
-        "README.md",
         "tests/consent.test.mjs"
       ],
-      "recommendation": "This is a documented, accepted boundary rather than a defect — treat it as such unless the decision changes. If it is revisited, the cheapest increment is to record `verify.sh`'s hash alongside the `verify-on-stop` marker when it is written and print a one-line notice on Stop when it no longer matches, without blocking.",
-      "resolution": ""
+      "recommendation": "Carry it as documented. If the decision is ever revisited, the cheapest increment is still to record `verify.sh`'s hash alongside the `verify-on-stop` marker and print a one-line non-blocking notice on Stop when it no longer matches.",
+      "resolution": "Not a code change: reclassified from `open` to `accepted` because the repository documents the boundary in README.md:560-562 and the baseline schema now has a status for a risk the project has decided to carry.",
+      "impact": "security",
+      "trigger": "specific_conditions",
+      "blast_radius": "component"
     },
     {
       "id": "F010",
@@ -286,9 +290,47 @@
       ],
       "recommendation": "In tests/schemas.test.mjs, import `IMPACT`/`TRIGGER`/`BLAST_RADIUS` from `tools/severity.mjs` and assert each equals the corresponding `enum` at every site that declares it (`risks.items`, `finding_reviews.items`, `new_findings.items`), so a value added to one place fails the suite. Then drop the hardcoded vocabulary assertion in tests/severity.test.mjs:42-47 or retitle it, since it currently claims a schema relationship it does not verify. Keep the exhaustive `EXPECTED` table in severity.test.mjs written out by hand — that duplication is deliberate and correct.",
       "resolution": ""
+    },
+    {
+      "id": "F012",
+      "status": "new",
+      "impact": "incorrect_result",
+      "trigger": "normal_use",
+      "blast_radius": "component",
+      "severity": "high",
+      "title": "A Compose stack the preflight starts is neither recorded nor announced, so the one-shot initializer leaves it running while reporting that it restored the machine",
+      "detail": "`ensure_supabase` obeys the project's own rule for started infrastructure: it appends `supabase` to `$HARNESS_INFRA_STARTED_FILE` for a one-shot caller to undo, or, when nobody is listening, prints that it left the stack running plus the command that stops it (project-template/.claude/preflight.sh:113-123). `ensure_compose` does neither — it runs `docker compose -f \"$compose_file\" up -d` and returns (project-template/.claude/preflight.sh:163-170). Nothing is written to the record file and nothing is printed about the containers now running.\n\nThe consequences are asymmetric with what the harness says it does. `tools/init-project.sh:1124-1178` calls the preflight with `HARNESS_INFRA_STARTED_FILE` under the comment \"it puts the machine back the way it found it\", but the teardown matches only the literal line `supabase` (tools/init-project.sh:1161), so a Compose stack started by that same run is silently left up; README.md:459-460 and README.es.md:470-473 state without qualification that init \"records what the preflight started and stops it afterwards, leaving the machine as it found it\". On the Stop path, where leaving the stack up is deliberate, the announcement that makes that acceptable never happens for Compose. The repository states this as a rule for itself: .claude/rules/harness-generated-project-scaffold.md:13 — \"Infrastructure the preflight starts is either recorded through `HARNESS_INFRA_STARTED_FILE` for a one-shot caller to undo, or announced out loud with the command that stops it. Starting a stack silently and walking away is the original defect\" — and .claude/rules/project-architecture.md:71 repeats it as the preflight's contract.\n\nThe changed scope is what makes this worth raising now: broadening detection to root-level `*.sh` and `Makefile` (project-template/.claude/preflight.sh:143-149) means `ensure_compose` fires in materially more repositories than before, so the unrecorded, unannounced start happens more often. Coverage matches the gap: tests/init-project.test.mjs:177-197 pins record-and-announce for Supabase; the two Compose tests (tests/init-project.test.mjs:255-271) assert only whether `up -d` was issued, not whether it was recorded or announced.",
+      "evidence_paths": [
+        "project-template/.claude/preflight.sh",
+        "tools/init-project.sh",
+        "tests/init-project.test.mjs",
+        ".claude/rules/harness-generated-project-scaffold.md",
+        ".claude/rules/project-architecture.md",
+        "README.md"
+      ],
+      "recommendation": "Give `ensure_compose` the same ending `ensure_supabase` has: check `docker compose -f \"$compose_file\" ps -q` (or the `docker-compose` equivalent) before starting, and only when it was down, append a `compose` line to `$HARNESS_INFRA_STARTED_FILE` or else print that it was left running with `docker compose -f <file> down`. Then extend the teardown in tools/init-project.sh:1161 to handle a `compose` line as well as `supabase`, and add the two Compose cases to the existing `preflightRun` tests so the record-or-announce contract is pinned for both stacks rather than one.",
+      "resolution": ""
+    },
+    {
+      "id": "F013",
+      "status": "new",
+      "impact": "maintenance",
+      "trigger": "specific_conditions",
+      "blast_radius": "component",
+      "severity": "low",
+      "title": "The widened Compose heuristic treats any mention in a root script as consent, including comments, teardown commands and a different compose file",
+      "detail": "`project_references_compose` now also returns true when `grep -E -q 'docker[ -]compose|docker compose' ./*.sh Makefile` matches (project-template/.claude/preflight.sh:147-149). The match is any occurrence anywhere in those files: a comment (`# to reset, run docker compose down`), a teardown-only script, a CI helper, or a deploy script that runs `docker compose -f docker-compose.prod.yml up -d`. In every one of those cases the preflight then brings up `$compose_file` — the first of `compose.yml`/`compose.yaml`/`docker-compose.yml`/`docker-compose.yaml` found in the root (project-template/.claude/preflight.sh:126-129) — which need not be the file the script referred to. Since the preflight runs before every Stop verification once the gate is earned, this recurs each task, and on macOS `ensure_docker` will start Docker Desktop to do it.\n\nThe file itself names this as the thing to avoid: \"A compose file alone is not consent to start it: a repository can ship one for an optional monitoring stack or a demo, and launching unrelated services is exactly what the standard forbids\" (tests/init-project.test.mjs:219-221; .claude/rules/harness-generated-project-scaffold.md:14). The same over-matching already existed for `grep -R` over `scripts/`, so this is a widening of an accepted heuristic rather than a new mechanism, and `HARNESS_AUTO_COMPOSE=0` plus `HARNESS_AUTO_INFRA=0` remain escape hatches — hence the conservative rating. Coverage is one positive (`start.sh` running `docker compose up -d`) and one negative (`start.sh` running `npm run dev`) at tests/init-project.test.mjs:255-271; neither the `Makefile` arm nor any false-positive shape is exercised.",
+      "evidence_paths": [
+        "project-template/.claude/preflight.sh",
+        "tests/init-project.test.mjs",
+        ".claude/rules/harness-generated-project-scaffold.md",
+        "README.md"
+      ],
+      "recommendation": "Narrow the match to a Compose command rather than a Compose mention: require the line to look like an invocation that brings a stack up, e.g. `grep -E -q '^[^#]*docker([ -])compose([^|;&]*)(-f [^ ]+ )?up'`, so comments and `down`/`stop` lines stop counting. Add a `Makefile` case and one false-positive case (a root script whose only mention is a comment) to `composeRun`, both of which fail against the current pattern.",
+      "resolution": ""
     }
   ],
-  "next_finding_id": 12,
+  "next_finding_id": 14,
   "full_reanalysis_recommended": false,
   "full_reanalysis_reason": ""
 }

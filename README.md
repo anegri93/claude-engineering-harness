@@ -443,7 +443,8 @@ working tree and no recorded edit — a task that edits files and then commits t
 tree, and is still verified.
 
 **The preflight** checks whether Docker is installed but stopped, whether `supabase/config.toml`
-exists with the stack down, and whether the repo genuinely references Docker Compose. Both waits
+exists with the stack down, and whether the repo genuinely references Docker Compose — in
+`package.json`, under `scripts/`, or in a root-level `*.sh` or `Makefile`. Both waits
 are bounded and overridable:
 
 ```bash

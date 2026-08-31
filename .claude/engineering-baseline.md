@@ -13,11 +13,24 @@ Four layers with deliberately little overlap (README.md "Boundary"): Claude Code
 
 ## Active findings
 
+### [NEW] HIGH — A Compose stack the preflight starts is neither recorded nor announced, so the one-shot initializer leaves it running while reporting that it restored the machine · F012
+
+`ensure_supabase` obeys the project's own rule for started infrastructure: it appends `supabase` to `$HARNESS_INFRA_STARTED_FILE` for a one-shot caller to undo, or, when nobody is listening, prints that it left the stack running plus the command that stops it (project-template/.claude/preflight.sh:113-123). `ensure_compose` does neither — it runs `docker compose -f "$compose_file" up -d` and returns (project-template/.claude/preflight.sh:163-170). Nothing is written to the record file and nothing is printed about the containers now running.
+
+The consequences are asymmetric with what the harness says it does. `tools/init-project.sh:1124-1178` calls the preflight with `HARNESS_INFRA_STARTED_FILE` under the comment "it puts the machine back the way it found it", but the teardown matches only the literal line `supabase` (tools/init-project.sh:1161), so a Compose stack started by that same run is silently left up; README.md:459-460 and README.es.md:470-473 state without qualification that init "records what the preflight started and stops it afterwards, leaving the machine as it found it". On the Stop path, where leaving the stack up is deliberate, the announcement that makes that acceptable never happens for Compose. The repository states this as a rule for itself: .claude/rules/harness-generated-project-scaffold.md:13 — "Infrastructure the preflight starts is either recorded through `HARNESS_INFRA_STARTED_FILE` for a one-shot caller to undo, or announced out loud with the command that stops it. Starting a stack silently and walking away is the original defect" — and .claude/rules/project-architecture.md:71 repeats it as the preflight's contract.
+
+The changed scope is what makes this worth raising now: broadening detection to root-level `*.sh` and `Makefile` (project-template/.claude/preflight.sh:143-149) means `ensure_compose` fires in materially more repositories than before, so the unrecorded, unannounced start happens more often. Coverage matches the gap: tests/init-project.test.mjs:177-197 pins record-and-announce for Supabase; the two Compose tests (tests/init-project.test.mjs:255-271) assert only whether `up -d` was issued, not whether it was recorded or announced.
+
+- Evidence: `project-template/.claude/preflight.sh`, `tools/init-project.sh`, `tests/init-project.test.mjs`, `.claude/rules/harness-generated-project-scaffold.md`, `.claude/rules/project-architecture.md`, `README.md`
+- Rated: incorrect_result × normal_use × component
+- Incremental recommendation: Give `ensure_compose` the same ending `ensure_supabase` has: check `docker compose -f "$compose_file" ps -q` (or the `docker-compose` equivalent) before starting, and only when it was down, append a `compose` line to `$HARNESS_INFRA_STARTED_FILE` or else print that it was left running with `docker compose -f <file> down`. Then extend the teardown in tools/init-project.sh:1161 to handle a `compose` line as well as `supabase`, and add the two Compose cases to the existing `preflightRun` tests so the record-or-announce contract is pinned for both stacks rather than one.
+
 ### [OPEN] MEDIUM — Graft- and Claude-written project files are untracked and unignored in this repository · F001
 
 `.claude/` (settings.json, helpers/, skills/graft/, the generated rules and baseline), `.mcp.json` and `.ignore` are present but untracked, and `.gitignore` ignores only `/graft/`. `verify-project.sh` decides whether a session changed anything from `git diff` plus `git ls-files --others --exclude-standard`; a permanently non-empty untracked set makes `TREE_CHANGED` always true, so the full verification suite runs after every Stop in this repository — including sessions that only answered a question. That is the exact cost problem `ignore_graft_output()` was written to fix for `graft/`, and the README names it as the strongest reason a user disables the gate.
 
 - Evidence: `src/hooks/verify-project.sh`, `tools/init-project.sh`, `.gitignore`, `README.md`
+- Rated: carried over from a baseline written before severity axes existed; not re-measured
 - Incremental recommendation: Decide per file and record it: commit the ones that are configuration (`.mcp.json`, `.claude/settings.json`) or add the Graft-written paths to `.gitignore` next to the existing `/graft/` entry. Extending `ignore_graft_output()` to cover the other paths `graft init` writes would fix it for every initialized project at once.
 
 ### [OPEN] MEDIUM — The baseline `.md`/`.json` pair is replaced by four non-atomic copies · F002
@@ -25,6 +38,7 @@ Four layers with deliberately little overlap (README.md "Boundary"): Claude Code
 `refresh-baseline.sh` backs up both files and then runs `cp` over `engineering-baseline.md` and `engineering-baseline.json` in sequence. This runs inside the Stop hook, which `merge-settings.mjs` installs with `timeout: 900` — after verification has already consumed part of that budget. A timeout, a `Ctrl-C` or a full disk between the two copies leaves the human-readable baseline and the machine state disagreeing about finding IDs, which is the same inconsistency the CHANGELOG records as the reason `set -e` was removed from this script. Everywhere else the repository is strict about this: `writeJsonFileAtomic` exists precisely so an interrupted write cannot truncate.
 
 - Evidence: `tools/refresh-baseline.sh`, `tools/settings-io.mjs`, `tools/merge-settings.mjs`, `CLAUDE.md`
+- Rated: carried over from a baseline written before severity axes existed; not re-measured
 - Incremental recommendation: Write both files into the project's `.claude/` as sibling temp files first, then `mv` each over its target back to back, so the window where the pair can disagree is two renames rather than two full copies. The backup step already gives a recovery path if it still tears.
 
 ### [OPEN] MEDIUM — `CLAUDE.md` is rewritten in place during initialization, against the repository's own rule · F003
@@ -32,6 +46,7 @@ Four layers with deliberately little overlap (README.md "Boundary"): Claude Code
 `merge_managed_claude()` in `init-project.sh` strips the managed block into a temp file, then redirects a second `awk` straight onto `$CLAUDE_FILE`, truncating it before appending the refreshed block. An interruption between the truncation and the final `cat` leaves the user's `CLAUDE.md` empty or half-written. `CLAUDE.md` states the rule as "never overwrite a user file in place — write a temp file and rename over the target", and `writeJsonFileAtomic` implements exactly that for settings. A backup under `harness-project-backups/` exists, but recovery is manual and the file is the user's own prose.
 
 - Evidence: `tools/init-project.sh`, `tools/settings-io.mjs`, `CLAUDE.md`
+- Rated: carried over from a baseline written before severity axes existed; not re-measured
 - Incremental recommendation: Assemble the whole new `CLAUDE.md` in the existing temp file and `mv` it over the target once, mirroring what the Docker-lint splice already does for `verify.sh` (`> "$VERIFY_FILE.tmp" && mv`). It is a two-line change in the same function.
 
 ### [OPEN] MEDIUM — Graft is installed and upgraded globally from `@latest` with no pin · F004
@@ -39,6 +54,7 @@ Four layers with deliberately little overlap (README.md "Boundary"): Claude Code
 `install.sh` and `tools/init-project.sh` both run `npm install -g @nanonets/graft@latest` whenever the registry reports a version ahead of the installed one, and `init-project.sh` performs that check on every project initialization — which the README instructs users to rerun after every harness upgrade. A single third-party package is therefore installed globally and silently updated on a schedule the user does not control, in a repository whose stated standard is "review a dependency before adding it".
 
 - Evidence: `install.sh`, `tools/init-project.sh`, `README.md`
+- Rated: carried over from a baseline written before severity axes existed; not re-measured
 - Incremental recommendation: Record the Graft version the harness has been tested against (a `GRAFT_VERSION` constant beside `VERSION`) and install that by default, keeping `@latest` behind an explicit opt-in flag. At minimum, print the resolved version before installing so an unexpected jump is visible in the init output.
 
 ### [OPEN] MEDIUM — `tools/init-project.sh` concentrates most of the harness's behaviour in one 1,260-line script · F005
@@ -46,6 +62,7 @@ Four layers with deliberately little overlap (README.md "Boundary"): Claude Code
 One file performs argument parsing, project-root resolution, stack and script detection, Graft wiring and evidence gathering, the streamed model call, rendering, CLAUDE.md merging, rule installation, preflight approval, per-stack `verify.sh` synthesis, the hadolint splice, preflight execution, verification, infrastructure teardown and the summary. Two shipped regressions already lived in the `verify.sh` generation section alone (the Dockerfile block never inserted on macOS, and a Bash 3.2 unbound-array abort). Coverage exists but is indirect: `tests/init-project.test.mjs` drives the whole script with `--skip-graft --skip-ai-analysis --skip-verify` and inspects the file it produced.
 
 - Evidence: `tools/init-project.sh`, `tests/init-project.test.mjs`, `CHANGELOG.md`
+- Rated: carried over from a baseline written before severity axes existed; not re-measured
 - Incremental recommendation: Do not grow it further in place. When the next section needs changing, extract that one — `verify.sh` generation is the natural first candidate, since it is self-contained, already has its own test file, and would become directly testable rather than only observable through its output.
 
 ### [NEW] MEDIUM — The severity axis vocabularies are duplicated between `tools/severity.mjs` and both JSON schemas, with no test comparing them · F011
@@ -57,6 +74,7 @@ The drift fails in the passing direction, which is what makes it worth a test. A
 Rated conservatively: the fallback is visible rather than silent-and-mild (`NOT MEASURED` reads as unmeasured, never as `low`), and the harm needs a deliberate enum edit, so this is a latent drift risk across every initialized project rather than a defect occurring now.
 
 - Evidence: `tools/severity.mjs`, `tests/severity.test.mjs`, `tests/schemas.test.mjs`, `src/harness/project-analysis-schema.json`, `src/harness/baseline-refresh-schema.json`, `tools/render-baseline-refresh.mjs`
+- Rated: carried over from a baseline written before severity axes existed; not re-measured
 - Incremental recommendation: In tests/schemas.test.mjs, import `IMPACT`/`TRIGGER`/`BLAST_RADIUS` from `tools/severity.mjs` and assert each equals the corresponding `enum` at every site that declares it (`risks.items`, `finding_reviews.items`, `new_findings.items`), so a value added to one place fails the suite. Then drop the hardcoded vocabulary assertion in tests/severity.test.mjs:42-47 or retitle it, since it currently claims a schema relationship it does not verify. Keep the exhaustive `EXPECTED` table in severity.test.mjs written out by hand — that duplication is deliberate and correct.
 
 ### [OPEN] LOW — A failed hadolint splice warns and continues, producing a `verify.sh` with no Dockerfile lint · F006
@@ -64,6 +82,7 @@ Rated conservatively: the fallback is visible rather than silent-and-mild (`NOT 
 The Dockerfile lint block is inserted by scanning the generated `verify.sh` for the `HARNESS_PREFLIGHT_DONE` line. If that marker ever changes in one of the five per-stack heredocs and not in the splice condition, `DOCKER_LINT_INSERTED` stays false and the script prints a warning to stderr, then continues to `chmod +x` and enable the gate. The warning lands in the middle of a long initialization log, so a project would quietly verify without the Dockerfile check it is documented to have. `tests/init-project.test.mjs` asserts the block is present for four stacks, which is what keeps this hypothetical.
 
 - Evidence: `tools/init-project.sh`, `tests/init-project.test.mjs`
+- Rated: carried over from a baseline written before severity axes existed; not re-measured
 - Incremental recommendation: Make the splice failure fatal for the generation step, or surface it in the final summary block alongside `Verification:` rather than only at the point it happens — the summary is the part of the output a user actually reads.
 
 ### [OPEN] LOW — Repository file content reaches the prompt that writes always-loaded instruction files · F007
@@ -71,6 +90,7 @@ The Dockerfile lint block is inserted by scanning the generated `verify.sh` for 
 Still open, and the changed scope narrows it only slightly. `risks` entries are now constrained to three enums (`impact`/`trigger`/`blast_radius`, src/harness/project-analysis-schema.json:90-92) and `tools/render-project-analysis.mjs:349,367` derives `severity` through `severityOf()` instead of accepting a level the model wrote, so repository text can no longer steer a finding's rating through a free-text field — the model can only pick from a closed vocabulary that a table then interprets. That removes one influence channel, not the one the finding is about. Rule group titles, rationales and bodies are still model-authored prose written into `.claude/rules/harness-*.md`, which Claude Code loads as instructions every session, and the mechanical guards are unchanged (`safeRuleText` at tools/render-project-analysis.mjs:66-72 still strips a leading `@` and markdown link targets; paths, globs and slugs are sanitized separately). The recommendation is also still unimplemented: `src/harness/project-analysis-prompt.md:32` frames only "existing instruction files" as evidence, and nothing states that everything read from the repository is data to be described rather than instructions to follow. Note that finding `detail`/`title`/`recommendation` reach `engineering-baseline.md` through `text()` rather than `safeRuleText()` (tools/render-project-analysis.mjs:368-372, 383-396), so the `@`-import and link neutralization does not cover the baseline — pre-existing, and lower risk because the baseline is referenced by path rather than `@`-imported.
 
 - Evidence: `tools/render-project-analysis.mjs`, `src/harness/project-analysis-prompt.md`, `src/harness/project-analysis-schema.json`, `tests/render.test.mjs`
+- Rated: carried over from a baseline written before severity axes existed; not re-measured
 - Incremental recommendation: Unchanged and still cheap: one line in `src/harness/project-analysis-prompt.md` extending the framing already applied to the Graft block to repository file content generally. Separately, consider routing finding `detail` through `safeRuleText` in both renderers so the baseline gets the same `@`/link neutralization the rule files already have.
 
 ### [OPEN] LOW — The README mirror obligation is enforced by convention alone · F008
@@ -78,21 +98,39 @@ Still open, and the changed scope narrows it only slightly. `risks` entries are 
 `CLAUDE.md` states that `README.md` and `README.es.md` move together in the same commit, and the two are substantial documents that both currently carry uncommitted changes. The comparable pairing — `VERSION` against the newest released `CHANGELOG.md` heading — is machine-checked in `tests/version.test.mjs`, and the repository's own history shows that an unverified documentation claim survives for months (the two comments referencing a test file that did not exist).
 
 - Evidence: `CLAUDE.md`, `README.md`, `tests/version.test.mjs`
+- Rated: carried over from a baseline written before severity axes existed; not re-measured
 - Incremental recommendation: A cheap structural check would catch the common case without policing prose: assert the two files have the same set of `##` headings in the same order, or the same number of Mermaid blocks and tables. That fails on a section added to one and not the other, which is the drift that actually happens.
-
-### [OPEN] LOW — `.claude/verify.sh` is executed on every Stop with no integrity check, while `preflight.sh` is hash-pinned · F009
-
-The consent model records an approval hash for a custom `preflight.sh` and withdraws it when the file changes, but `verify.sh` — which the Stop hook executes on every task once the project is adopted — has no equivalent. `init-project.sh` regenerates `verify.sh` from the detected stack rather than adopting the repository's, which closes the clone case, but a later `git pull` in an adopted repository can replace it and it will run unchallenged. The README states this is out of scope by design, comparing it to trusting a `Makefile`.
-
-- Evidence: `tools/init-project.sh`, `src/hooks/verify-project.sh`, `README.md`, `tests/consent.test.mjs`
-- Incremental recommendation: This is a documented, accepted boundary rather than a defect — treat it as such unless the decision changes. If it is revisited, the cheapest increment is to record `verify.sh`'s hash alongside the `verify-on-stop` marker when it is written and print a one-line notice on Stop when it no longer matches, without blocking.
 
 ### [OPEN] LOW — Runtime state keys collide when no SHA-256 tool is available · F010
 
 `init-project.sh`, `verify-project.sh` and `refresh-baseline.sh` each derive the per-project state directory as `<basename>_<sha256 prefix>`, falling back to the literal `nohash` when neither `shasum` nor `sha256sum` is on PATH. On such a machine two different checkouts sharing a directory name (`api`, `web`, `app`) map to the same `~/.claude/harness-runtime/` directory, so consent granted for one repository silently enables the Stop gate and the paid refresh for the other, and their `changed-files.txt` records merge.
 
 - Evidence: `tools/init-project.sh`, `src/hooks/verify-project.sh`, `src/hooks/mark-baseline-dirty.sh`, `tools/refresh-baseline.sh`
+- Rated: carried over from a baseline written before severity axes existed; not re-measured
 - Incremental recommendation: Treat a missing hash tool as an environment condition rather than a silent fallback: have `init-project.sh` refuse to write markers and say which command to install, so consent is never recorded under a key that cannot distinguish projects. The hooks then simply find no marker and stay inert.
+
+### [NEW] LOW — The widened Compose heuristic treats any mention in a root script as consent, including comments, teardown commands and a different compose file · F013
+
+`project_references_compose` now also returns true when `grep -E -q 'docker[ -]compose|docker compose' ./*.sh Makefile` matches (project-template/.claude/preflight.sh:147-149). The match is any occurrence anywhere in those files: a comment (`# to reset, run docker compose down`), a teardown-only script, a CI helper, or a deploy script that runs `docker compose -f docker-compose.prod.yml up -d`. In every one of those cases the preflight then brings up `$compose_file` — the first of `compose.yml`/`compose.yaml`/`docker-compose.yml`/`docker-compose.yaml` found in the root (project-template/.claude/preflight.sh:126-129) — which need not be the file the script referred to. Since the preflight runs before every Stop verification once the gate is earned, this recurs each task, and on macOS `ensure_docker` will start Docker Desktop to do it.
+
+The file itself names this as the thing to avoid: "A compose file alone is not consent to start it: a repository can ship one for an optional monitoring stack or a demo, and launching unrelated services is exactly what the standard forbids" (tests/init-project.test.mjs:219-221; .claude/rules/harness-generated-project-scaffold.md:14). The same over-matching already existed for `grep -R` over `scripts/`, so this is a widening of an accepted heuristic rather than a new mechanism, and `HARNESS_AUTO_COMPOSE=0` plus `HARNESS_AUTO_INFRA=0` remain escape hatches — hence the conservative rating. Coverage is one positive (`start.sh` running `docker compose up -d`) and one negative (`start.sh` running `npm run dev`) at tests/init-project.test.mjs:255-271; neither the `Makefile` arm nor any false-positive shape is exercised.
+
+- Evidence: `project-template/.claude/preflight.sh`, `tests/init-project.test.mjs`, `.claude/rules/harness-generated-project-scaffold.md`, `README.md`
+- Rated: maintenance × specific_conditions × component
+- Incremental recommendation: Narrow the match to a Compose command rather than a Compose mention: require the line to look like an invocation that brings a stack up, e.g. `grep -E -q '^[^#]*docker([ -])compose([^|;&]*)(-f [^ ]+ )?up'`, so comments and `down`/`stop` lines stop counting. Add a `Makefile` case and one false-positive case (a root script whose only mention is a comment) to `composeRun`, both of which fail against the current pattern.
+
+## Accepted risks
+
+Real risks the project has decided to carry. The rating states the risk; the status states the decision.
+
+### [ACCEPTED] HIGH — `.claude/verify.sh` is executed on every Stop with no integrity check, while `preflight.sh` is hash-pinned · F009
+
+Code evidence is unchanged by this task: `tools/init-project.sh:913-971` still hash-pins a custom `preflight.sh` (`preflight-approved` in the runtime state dir, withdrawn on edit), while `verify.sh` is regenerated and then executed on every Stop with no recorded hash. What changed is the status, not the risk. README.md:560-562 states the boundary in writing — "once you have adopted a repository, its `verify.sh` is a script you run, and a later `git pull` can change it. That is the same trust you extend to a `Makefile` or a `package.json` script — the harness does not add a second layer over it" — and CHANGELOG.md:7 records that the `accepted` status was added precisely because "this repository's own documented `verify.sh` trust boundary came back rated `low`" when the only way to express a carried risk was to understate it. The rating now states the risk (a repository-shipped script executing with the user's credentials after an adopted repo is updated) and the status states the decision.
+
+- Evidence: `README.md`, `CHANGELOG.md`, `tools/init-project.sh`, `src/hooks/verify-project.sh`, `tests/consent.test.mjs`
+- Rated: security × specific_conditions × component
+- Incremental recommendation: Carry it as documented. If the decision is ever revisited, the cheapest increment is still to record `verify.sh`'s hash alongside the `verify-on-stop` marker and print a one-line non-blocking notice on Stop when it no longer matches.
+- Resolution note: Not a code change: reclassified from `open` to `accepted` because the repository documents the boundary in README.md:560-562 and the baseline schema now has a status for a risk the project has decided to carry.
 
 ## Evidenced business invariants
 

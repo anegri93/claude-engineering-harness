@@ -215,3 +215,57 @@ test('a dependency-free Node repository verifies with the built-in test runner',
   assert.match(body, /node --test/, 'a repo with node test files does not use the built-in runner')
   assert.doesNotMatch(body, /exit 3/, 'a repo with a real test strategy still degrades to exit 3')
 })
+
+// A compose file alone is not consent to start it: a repository can ship one for an optional
+// monitoring stack or a demo, and launching unrelated services is exactly what the standard
+// forbids. So the preflight looks for the project *referring* to compose before bringing it
+// up — and that search used to cover only package.json and scripts/. A monorepo that drives
+// its stack from a root-level start.sh therefore read as "no compose here": Docker Desktop was
+// started, Mongo never was, and every database-backed test failed on a connect timeout while
+// the preflight reported "passed". The gate then blamed the code for a stack nobody launched.
+function composeRun(t, files) {
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'harness-compose-'))
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'harness-compose-bin-'))
+  t.after(() => {
+    fs.rmSync(project, { recursive: true, force: true })
+    fs.rmSync(bin, { recursive: true, force: true })
+  })
+
+  for (const [name, body] of Object.entries(files)) {
+    fs.mkdirSync(path.join(project, path.dirname(name)), { recursive: true })
+    fs.writeFileSync(path.join(project, name), body)
+  }
+
+  // The stack is stubbed; what is under test is whether the preflight decides to start it.
+  const log = path.join(project, 'docker.log')
+  fs.writeFileSync(
+    path.join(bin, 'docker'),
+    ['#!/bin/sh', `echo "$@" >> ${JSON.stringify(log)}`, 'exit 0', ''].join('\n'),
+    { mode: 0o755 }
+  )
+
+  const result = spawnSync('bash', [PREFLIGHT], {
+    cwd: project,
+    encoding: 'utf8',
+    env: { ...process.env, PATH: `${bin}:${process.env.PATH}` }
+  })
+  return { result, log: fs.existsSync(log) ? fs.readFileSync(log, 'utf8') : '' }
+}
+
+test('a stack driven from a root-level script is started, not silently skipped', { skip }, t => {
+  const box = composeRun(t, {
+    'docker-compose.yml': 'services:\n  mongo:\n    image: mongo:7\n',
+    'start.sh': '#!/usr/bin/env bash\ndocker compose up -d\n'
+  })
+  assert.equal(box.result.status, 0, box.result.stderr)
+  assert.match(box.log, /up -d/, 'the compose stack the project drives from start.sh was never started')
+})
+
+test('a compose file nothing refers to is left alone', { skip }, t => {
+  const box = composeRun(t, {
+    'docker-compose.yml': 'services:\n  grafana:\n    image: grafana/grafana\n',
+    'start.sh': '#!/usr/bin/env bash\nnpm run dev\n'
+  })
+  assert.equal(box.result.status, 0, box.result.stderr)
+  assert.doesNotMatch(box.log, /up -d/, 'the preflight launched a stack the repository never asked for')
+})
