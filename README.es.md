@@ -291,6 +291,33 @@ que se comprobó que falla antes del fix. Los números, al final.
 comportamiento nuevo, así que no dice nada sobre el cambio que te piden confiar. La lista sí; el
 número es contexto de la lista, nunca su reemplazo.
 
+### 13. Una unidad de trabajo, una rama, un merge commit
+
+Ramificar como `<tipo>/<slug-kebab>` con el vocabulario de Conventional Commits, mantener la rama
+viva horas y no días, y mergearla con un merge commit — nunca squash, nunca rebase-merge. La
+convención del propio repositorio gana donde exista.
+
+**Por qué.** De esto se siguen dos cosas, y solo una es cosmética. La cosmética es un historial
+legible: el merge commit es lo que dibuja la burbuja en el gráfico, y una rama llamada `perf/` al
+lado de un commit tipado `perf(worker):` dice qué fue un cambio sin abrirlo — con squash en todo,
+el gráfico es una línea recta que no registra nada sobre cómo se dividió el trabajo. La que
+importa es que el pull request es donde corren los checks. Un trigger `pull_request:` en CI no
+vale nada en un repositorio donde todo se pushea a la rama por defecto: el job existe, figura en
+verde en la página de settings, y nunca corrió una sola vez antes de un merge. Pushear a `main` no
+es más rápido que abrir un PR, solo mueve la falla a después del hecho.
+
+Preparar un repositorio para esto es un comando, una sola vez:
+
+```bash
+gh repo edit --enable-squash-merge=false --enable-rebase-merge=false \
+             --enable-merge-commit --delete-branch-on-merge
+```
+
+El harness se detiene ahí a propósito. No hay job de CI que valide el nombre de rama ni branch
+protection en el estándar, porque ambas cosas son formas de vigilar una convención en lugar de
+seguirla, y un repositorio que necesita ser forzado a esta forma tiene un problema de personas que
+el harness no puede arreglar.
+
 El instalador además fija el modelo y el esfuerzo con el que corre este trabajo:
 
 ```text

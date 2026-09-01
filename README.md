@@ -284,6 +284,32 @@ before the fix. Report the counts last.
 covered or not, so it carries no information about the change you are being asked to trust. The
 list does; the count is context for the list, never a substitute for it.
 
+### 13. One unit of work, one branch, one merge commit
+
+Branch as `<type>/<kebab-slug>` with the Conventional Commits vocabulary, keep the branch alive
+for hours rather than days, and merge it with a merge commit — never a squash, never a
+rebase-merge. The repository's own convention wins where it has one.
+
+**Why.** Two things follow from it, and only one is cosmetic. The cosmetic one is a readable
+history: the merge commit is what draws the bubble in the graph, and a branch named `perf/` next
+to a commit typed `perf(worker):` says what a change was without opening it — squash everything
+and the graph is a straight line that records nothing about how the work was divided. The one
+that matters is that a pull request is where the checks run. A `pull_request:` trigger in CI is
+worth nothing in a repository where everything is pushed to the default branch: the job exists,
+is green in the settings page, and has never once run before a merge. Pushing to `main` is not
+faster than opening a PR, it just moves the failure to after the fact.
+
+Setting a repository up for it is one command, run once:
+
+```bash
+gh repo edit --enable-squash-merge=false --enable-rebase-merge=false \
+             --enable-merge-commit --delete-branch-on-merge
+```
+
+The harness deliberately stops there. There is no branch-name CI job and no branch protection in
+the standard, because both are ways of policing a convention rather than following one, and a
+repository that needs to be forced into this shape has a people problem the harness cannot fix.
+
 The installer also pins the model and effort this work runs at:
 
 ```text

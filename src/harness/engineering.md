@@ -116,6 +116,26 @@ Prefer architectural scalability over infrastructure complexity.
 - Do not add dependencies for trivial functionality already available in the project or platform.
 - Keep diffs focused and reviewable.
 
+## Branch and merge
+
+One unit of work is one branch, one pull request, one merge commit. The shape of the history is
+the only durable record of how the work was actually broken up.
+
+- Branch from the default branch as `<type>/<kebab-slug>`, using the Conventional Commits
+  vocabulary: `feat/` `fix/` `docs/` `chore/` `refactor/` `perf/` `test/` `infra/`. The prefix is
+  the type of the branch's main commit, so the branch name and the commit type never disagree.
+- Keep branches short-lived. If a branch needs more than a handful of commits, or outlives the
+  day, it was two branches. Do not run two long-lived branches over the same area in parallel.
+- Merge with a merge commit rather than a squash or a rebase-merge. The squash erases the boundary
+  between the branch and the trunk, which is the one thing the history was recording.
+- Never push to the default branch directly in a repository whose checks run on pull requests.
+  That is the one path that skips them, and it skips them silently.
+- The repository's own convention wins. Read `git log --merges` and the repository's merge
+  settings before assuming: a repository configured for squash-only merges, or one that requires a
+  ticket number in the branch name, is stating a convention, and this default yields to it.
+- Constraints on what belongs in one commit outrank the commit count. If the project requires two
+  files to move together, they move together even when that makes the commit wide.
+
 ## Testing
 
 Test behavior and risk rather than implementation details.
