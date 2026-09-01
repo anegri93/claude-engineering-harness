@@ -482,6 +482,26 @@ test('one existing rule cannot be claimed by two groups', t => {
   assert.deepEqual(harnessRules(r), ['harness-frontend.md', 'harness-kit-dos.md'])
 })
 
+// A repository initialized before the prefix stripping landed still has `harness-harness-*.md`
+// on disk, and the scope match copies the existing filename verbatim — so the doubled name was
+// reused forever and the fix above never reached it. Observed live: four of eight rules in
+// mango-portal-colaborador came back `harness-harness-<topic>.md` on every rerun.
+test('a doubled prefix left by an older run is dropped when the rule is reused', t => {
+  const existing = withExistingRules(t, {
+    'harness-harness-money-crypto-and-exports.md': ['apps/api/src/dinero/**', 'packages/shared/src/dinero.ts']
+  })
+  const r = renderAnalysis(workspace(t), {
+    ...MINIMAL_ANALYSIS,
+    rule_groups: [{
+      title: 'Money, crypto and exports',
+      filename: 'harness-money-crypto-and-exports.md',
+      paths: ['apps/api/src/dinero/**', 'packages/shared/src/dinero.ts'],
+      rules: ['Money is integer minor units.']
+    }]
+  }, existing)
+  assert.deepEqual(harnessRules(r), ['harness-money-crypto-and-exports.md'])
+})
+
 test('with no existing rules on disk the model name is used unchanged', t => {
   const r = renderAnalysis(workspace(t), {
     ...MINIMAL_ANALYSIS,

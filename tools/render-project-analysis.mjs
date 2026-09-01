@@ -123,7 +123,10 @@ function existingRules(dir) {
       const m = /^\s*-\s*"(.*)"\s*$/.exec(line)
       if (m) paths.add(m[1])
     }
-    if (paths.size) out.push({ slug: name.replace(/^harness-/, '').replace(/\.md$/, ''), scope: scopeOf(paths) })
+    // Strip every prefix, not one: a repository initialized before the stripping below landed
+    // still carries `harness-harness-<topic>.md`, and a scope match copies this slug verbatim
+    // over the sanitized one, so a single strip re-prefixed the doubled name on every rerun.
+    if (paths.size) out.push({ slug: name.replace(/^(?:harness-)+/, '').replace(/\.md$/, ''), scope: scopeOf(paths) })
   }
   return out
 }
